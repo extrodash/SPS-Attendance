@@ -25,7 +25,19 @@
     <section class="card">
       <div class="section-title">
         <span>People</span>
-        <button id="edit-people-btn" class="ghost">Edit list</button>
+      </div>
+      <div class="people-controls">
+        <div class="people-input">
+          <input
+            id="person-input"
+            type="text"
+            autocomplete="off"
+            placeholder="Add a person"
+            aria-label="Add a person"
+          />
+          <button id="add-person-btn" class="primary">Add</button>
+        </div>
+        <div id="people-message" class="people-message" data-tone="muted"></div>
       </div>
       <div id="people-list" class="people-list"></div>
     </section>
@@ -68,18 +80,6 @@
       <strong>Firebase not configured.</strong>
       <div>Update <code>app.js</code> with your Firebase config to sync across devices.</div>
     </section>
-
-    <dialog id="people-dialog" class="people-dialog">
-      <form method="dialog" class="dialog-body">
-        <div class="dialog-title">People list</div>
-        <p class="hint">One name per line.</p>
-        <textarea id="people-textarea" rows="10" spellcheck="false"></textarea>
-        <div class="dialog-actions">
-          <button id="cancel-people" class="ghost" value="cancel">Cancel</button>
-          <button id="save-people" class="primary" value="save">Save list</button>
-        </div>
-      </form>
-    </dialog>
 
     <footer class="footer">
       Offline-ready. Changes sync when you reconnect.

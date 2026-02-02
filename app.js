@@ -30,10 +30,9 @@ const elements = {
   saveBtn: document.getElementById("save-btn"),
   saveStatus: document.getElementById("save-status"),
   peopleList: document.getElementById("people-list"),
-  editPeopleBtn: document.getElementById("edit-people-btn"),
-  peopleDialog: document.getElementById("people-dialog"),
-  peopleTextarea: document.getElementById("people-textarea"),
-  savePeopleBtn: document.getElementById("save-people"),
+  peopleInput: document.getElementById("person-input"),
+  addPersonBtn: document.getElementById("add-person-btn"),
+  peopleMessage: document.getElementById("people-message"),
   configWarning: document.getElementById("config-warning"),
   prevMonth: document.getElementById("prev-month"),
   nextMonth: document.getElementById("next-month"),
@@ -64,6 +63,9 @@ let auth = null;
 let unsubscribeAttendance = null;
 let unsubscribePeople = null;
 let unsubscribeMonth = null;
+let peopleMessageTimer = null;
+const removeConfirmTimers = new WeakMap();
+const REMOVE_CONFIRM_MS = 3500;
 
 init();
 
@@ -71,8 +73,12 @@ async function init() {
   elements.datePicker.value = state.currentDate;
   elements.datePicker.addEventListener("change", onDateChange);
   elements.saveBtn.addEventListener("click", onSave);
-  elements.editPeopleBtn.addEventListener("click", openPeopleDialog);
-  elements.savePeopleBtn.addEventListener("click", onSavePeople);
+  elements.addPersonBtn.addEventListener("click", addPersonFromInput);
+  elements.peopleInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      addPersonFromInput(event);
+    }
+  });
   elements.prevMonth.addEventListener("click", () => shiftMonth(-1));
   elements.nextMonth.addEventListener("click", () => shiftMonth(1));
   elements.exportBtn.addEventListener("click", exportBackup);
@@ -145,23 +151,57 @@ function onDateChange(event) {
   }
 }
 
-function openPeopleDialog() {
-  elements.peopleTextarea.value = state.people.map((person) => person.name).join("\n");
-  elements.peopleDialog.showModal();
+function normalizeName(value) {
+  return value.replace(/\s+/g, " ").trim();
 }
 
-async function onSavePeople(event) {
-  event.preventDefault();
-  const lines = elements.peopleTextarea.value
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
+function setPeopleMessage(message, tone = "muted") {
+  if (!elements.peopleMessage) {
+    return;
+  }
+  elements.peopleMessage.textContent = message;
+  elements.peopleMessage.dataset.tone = tone;
 
-  state.people = buildPeopleList(lines);
+  if (peopleMessageTimer) {
+    clearTimeout(peopleMessageTimer);
+    peopleMessageTimer = null;
+  }
+
+  if (message) {
+    peopleMessageTimer = setTimeout(() => {
+      elements.peopleMessage.textContent = "";
+      elements.peopleMessage.dataset.tone = "muted";
+    }, 3500);
+  }
+}
+
+async function addPersonFromInput(event) {
+  if (event) {
+    event.preventDefault();
+  }
+
+  const raw = elements.peopleInput.value || "";
+  const cleaned = normalizeName(raw);
+
+  if (!cleaned) {
+    setPeopleMessage("Enter a name to add.", "warn");
+    return;
+  }
+
+  const exists = state.people.some(
+    (person) => person.name.toLowerCase() === cleaned.toLowerCase()
+  );
+  if (exists) {
+    setPeopleMessage("That name already exists.", "warn");
+    elements.peopleInput.select();
+    return;
+  }
+
+  state.people = buildPeopleList([...state.people.map((person) => person.name), cleaned]);
+  elements.peopleInput.value = "";
   await savePeople();
   renderPeopleList();
-  markDirty();
-  elements.peopleDialog.close();
+  setPeopleMessage(`Added ${cleaned}.`, "success");
 }
 
 function buildPeopleList(names) {
@@ -216,7 +256,7 @@ function renderPeopleList() {
   if (!state.people.length) {
     const empty = document.createElement("div");
     empty.className = "hint";
-    empty.textContent = "No people yet. Click 'Edit list' to add names.";
+    empty.textContent = "No people yet. Add someone above to get started.";
     elements.peopleList.appendChild(empty);
     return;
   }
@@ -255,6 +295,12 @@ function renderPeopleList() {
 
     subGroup.append(amBtn, pmBtn);
 
+    const removeBtn = document.createElement("button");
+    removeBtn.className = "remove-btn";
+    removeBtn.type = "button";
+    removeBtn.textContent = "Remove";
+    removeBtn.setAttribute("aria-label", `Remove ${person.name}`);
+
     hereBtn.addEventListener("click", () => toggleStatus(person.id, "here"));
     notBtn.addEventListener("click", () => toggleStatus(person.id, "not"));
     clearBtn.addEventListener("click", () => clearStatus(person.id));
@@ -263,8 +309,11 @@ function renderPeopleList() {
     note.addEventListener("input", (event) => {
       setNote(person.id, event.target.value);
     });
+    removeBtn.addEventListener("click", () => {
+      requestRemovePerson(person.id, person.name, removeBtn);
+    });
 
-    row.append(name, statusGroup, note, subGroup);
+    row.append(name, statusGroup, note, subGroup, removeBtn);
     elements.peopleList.appendChild(row);
 
     applyRowState(person.id, row);
@@ -286,6 +335,54 @@ function createSubButton(label, field) {
   button.textContent = label;
   button.dataset.field = field;
   return button;
+}
+
+function requestRemovePerson(personId, name, button) {
+  if (button.dataset.confirming === "true") {
+    setRemoveButtonConfirming(button, false);
+    removePerson(personId);
+    return;
+  }
+
+  setRemoveButtonConfirming(button, true);
+  setPeopleMessage(`Click confirm to remove ${name}.`, "warn");
+}
+
+function setRemoveButtonConfirming(button, confirming) {
+  const timer = removeConfirmTimers.get(button);
+  if (timer) {
+    clearTimeout(timer);
+    removeConfirmTimers.delete(button);
+  }
+
+  if (!confirming) {
+    button.dataset.confirming = "false";
+    button.classList.remove("confirming");
+    button.textContent = "Remove";
+    return;
+  }
+
+  button.dataset.confirming = "true";
+  button.classList.add("confirming");
+  button.textContent = "Confirm";
+  const nextTimer = setTimeout(() => {
+    setRemoveButtonConfirming(button, false);
+  }, REMOVE_CONFIRM_MS);
+  removeConfirmTimers.set(button, nextTimer);
+}
+
+async function removePerson(personId) {
+  const index = state.people.findIndex((person) => person.id === personId);
+  if (index === -1) {
+    return;
+  }
+
+  const [removed] = state.people.splice(index, 1);
+  delete state.attendance[personId];
+  await savePeople();
+  renderPeopleList();
+  markDirty();
+  setPeopleMessage(`${removed.name} removed.`, "muted");
 }
 
 function applyRowState(personId, row) {
