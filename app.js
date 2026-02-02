@@ -500,9 +500,11 @@ function renderDirectoryList() {
     const identity = document.createElement("div");
     identity.className = "person-identity";
 
-    const name = document.createElement("div");
-    name.className = "person-name";
-    name.textContent = person.name;
+    const nameInput = document.createElement("input");
+    nameInput.className = "name-input";
+    nameInput.placeholder = "Name";
+    nameInput.value = person.name;
+    nameInput.setAttribute("aria-label", `Name for ${person.name}`);
 
     const teamInput = document.createElement("input");
     teamInput.className = "team-input";
@@ -543,11 +545,20 @@ function renderDirectoryList() {
         teamInput.blur();
       }
     });
+    nameInput.addEventListener("change", (event) => {
+      updatePersonName(person.id, event.target.value, nameInput);
+    });
+    nameInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        nameInput.blur();
+      }
+    });
     removeBtn.addEventListener("click", () => {
       requestRemovePerson(person.id, person.name, removeBtn);
     });
 
-    identity.append(name, teamInput);
+    identity.append(nameInput, teamInput);
     row.append(identity, availabilityGroup, removeBtn);
     elements.directoryList.appendChild(row);
   });
@@ -735,6 +746,50 @@ async function updatePersonTeam(personId, value) {
     nextTeam ? `${person.name} set to ${nextTeam}.` : `${person.name} unassigned.`,
     "muted"
   );
+}
+
+async function updatePersonName(personId, value, input) {
+  const person = state.people.find((entry) => entry.id === personId);
+  if (!person) {
+    return;
+  }
+
+  const cleaned = normalizeName(value || "");
+  const currentName = person.name;
+
+  if (!cleaned) {
+    if (input) {
+      input.value = currentName;
+    }
+    setPeopleMessage("Name can't be empty.", "warn");
+    return;
+  }
+
+  const duplicate = state.people.some(
+    (entry) =>
+      entry.id !== personId && entry.name.toLowerCase() === cleaned.toLowerCase()
+  );
+
+  if (duplicate) {
+    if (input) {
+      input.value = currentName;
+    }
+    setPeopleMessage("That name already exists.", "warn");
+    return;
+  }
+
+  if (cleaned === currentName) {
+    if (input) {
+      input.value = currentName;
+    }
+    return;
+  }
+
+  person.name = cleaned;
+  await savePeople();
+  renderDirectoryList();
+  renderAttendanceList();
+  setPeopleMessage(`Renamed to ${cleaned}.`, "success");
 }
 
 async function toggleAvailability(personId, dayKey, button) {
