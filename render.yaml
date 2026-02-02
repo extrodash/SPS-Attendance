@@ -1,6 +1,7 @@
 services:
-  - type: static_site
+  - type: web
     name: sps-attendance
+    runtime: static
     plan: free
     buildCommand: ""
     staticPublishPath: .
