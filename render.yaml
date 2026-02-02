@@ -2,7 +2,6 @@ services:
   - type: web
     name: sps-attendance
     runtime: static
-    plan: free
     buildCommand: ""
     staticPublishPath: .
     autoDeploy: true
