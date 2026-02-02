@@ -1,5 +1,5 @@
 services:
-  - type: static
+  - type: static_site
     name: sps-attendance
     plan: free
     buildCommand: ""
