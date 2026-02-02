@@ -225,7 +225,6 @@ button:focus-visible {
 
 .person-row {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) auto minmax(180px, 1.2fr) auto auto;
   gap: 12px;
   align-items: center;
   padding: 12px 14px;
@@ -233,6 +232,14 @@ button:focus-visible {
   border: 1px solid var(--line);
   background: var(--card);
   box-shadow: var(--shadow);
+}
+
+.person-row.attendance {
+  grid-template-columns: minmax(160px, 1fr) auto minmax(180px, 1.2fr) auto;
+}
+
+.person-row.directory {
+  grid-template-columns: minmax(200px, 1fr) auto auto;
 }
 
 .person-name {
@@ -254,6 +261,39 @@ button:focus-visible {
   transition: border-color 160ms ease, box-shadow 160ms ease;
 }
 
+.availability-group {
+  display: flex;
+  gap: 6px;
+  background: var(--chip);
+  border: 1px solid var(--chip-border);
+  padding: 4px;
+  border-radius: 10px;
+}
+
+.avail-btn {
+  min-width: 32px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: white;
+  cursor: pointer;
+  font-size: 12px;
+  transition: border-color 160ms ease, background 160ms ease, color 160ms ease,
+    transform 120ms ease;
+}
+
+.avail-btn:not(.active):hover {
+  background: var(--accent-soft);
+  border-color: var(--chip-border);
+}
+
+.avail-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-contrast);
+  font-weight: 600;
+}
+
 .status-group,
 .sub-group {
   display: flex;
@@ -265,8 +305,7 @@ button:focus-visible {
 }
 
 .status-btn,
-.sub-btn,
-.clear-btn {
+.sub-btn {
   min-width: 34px;
   padding: 6px 10px;
   border-radius: 8px;
@@ -279,8 +318,7 @@ button:focus-visible {
 }
 
 .status-btn:not(.active):hover,
-.sub-btn:not(.active):hover,
-.clear-btn:hover {
+.sub-btn:not(.active):hover {
   background: var(--accent-soft);
   border-color: var(--chip-border);
 }
@@ -292,6 +330,12 @@ button:focus-visible {
   border-color: rgba(27, 127, 59, 0.4);
 }
 
+.status-btn.active.tardy {
+  background: rgba(176, 118, 0, 0.2);
+  color: var(--warn);
+  border-color: rgba(176, 118, 0, 0.4);
+}
+
 .status-btn.active.not,
 .sub-btn.active.not {
   background: rgba(180, 35, 24, 0.15);
@@ -299,9 +343,6 @@ button:focus-visible {
   border-color: rgba(180, 35, 24, 0.4);
 }
 
-.clear-btn {
-  color: var(--muted);
-}
 
 .remove-btn {
   border-radius: 10px;
@@ -392,9 +433,10 @@ button:focus-visible {
 }
 
 .trend-row {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) 70px 70px 70px 70px;
   gap: 12px;
+  align-items: center;
   padding: 12px 14px;
   border-radius: 12px;
   border: 1px solid var(--line);
@@ -404,6 +446,26 @@ button:focus-visible {
 
 .trend-row .name {
   font-weight: 600;
+}
+
+.trend-row .metric {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.trend-header {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.trend-header .metric {
+  text-align: right;
 }
 
 .backup-actions {
@@ -448,6 +510,18 @@ button:focus-visible {
 @media (max-width: 800px) {
   .person-row {
     grid-template-columns: 1fr;
+  }
+
+  .trend-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .trend-row .name {
+    grid-column: 1 / -1;
+  }
+
+  .trend-header {
+    display: none;
   }
 }
 
@@ -502,8 +576,13 @@ button:focus-visible {
   }
 
   .status-btn,
-  .sub-btn,
-  .clear-btn {
+  .sub-btn {
+    background: var(--accent-soft);
+    border-color: var(--chip-border);
+    color: var(--text);
+  }
+
+  .avail-btn {
     background: var(--accent-soft);
     border-color: var(--chip-border);
     color: var(--text);
@@ -511,7 +590,7 @@ button:focus-visible {
 
   .status-btn:not(.active):hover,
   .sub-btn:not(.active):hover,
-  .clear-btn:hover,
+  .avail-btn:not(.active):hover,
   .ghost:hover,
   .file-label:hover,
   .remove-btn:hover {

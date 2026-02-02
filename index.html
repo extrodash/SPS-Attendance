@@ -9,8 +9,8 @@
   </head>
   <body>
     <header class="header">
-      <div class="title">Who showed up today?</div>
-      <div class="subtitle">Checklist + shared notebook for attendance.</div>
+      <div class="title">Service Project Shop</div>
+      <div class="subtitle">Service Missionaries' Attendance Roster</div>
     </header>
 
     <section class="card toolbar">
@@ -28,29 +28,42 @@
 
     <section class="card">
       <div class="section-title">
-        <span>People</span>
+        <span>Directory</span>
+        <button id="toggle-directory" class="ghost" type="button">
+          Edit profiles
+        </button>
       </div>
-      <div class="people-controls">
-        <div class="people-input">
-          <input
-            id="person-input"
-            type="text"
-            autocomplete="off"
-            placeholder="Add a person"
-            aria-label="Add a person"
-          />
-          <input
-            id="team-input"
-            type="text"
-            autocomplete="off"
-            placeholder="Team (optional)"
-            aria-label="Team"
-          />
-          <button id="add-person-btn" class="primary">Add</button>
+      <div id="directory-panel" hidden>
+        <div class="people-controls">
+          <div class="people-input">
+            <input
+              id="person-input"
+              type="text"
+              autocomplete="off"
+              placeholder="Add a person"
+              aria-label="Add a person"
+            />
+            <input
+              id="team-input"
+              type="text"
+              autocomplete="off"
+              placeholder="Team (optional)"
+              aria-label="Team"
+            />
+            <button id="add-person-btn" class="primary">Add</button>
+          </div>
+          <div id="people-message" class="people-message" data-tone="muted"></div>
         </div>
-        <div id="people-message" class="people-message" data-tone="muted"></div>
+        <div id="directory-list" class="people-list"></div>
       </div>
-      <div id="people-list" class="people-list"></div>
+    </section>
+
+    <section class="card">
+      <div class="section-title">
+        <span>Attendance</span>
+        <span id="attendance-hint" class="hint"></span>
+      </div>
+      <div id="attendance-list" class="people-list"></div>
     </section>
 
     <section class="card">

@@ -30,7 +30,11 @@ const elements = {
   saveBtn: document.getElementById("save-btn"),
   saveStatus: document.getElementById("save-status"),
   teamFilter: document.getElementById("team-filter"),
-  peopleList: document.getElementById("people-list"),
+  attendanceList: document.getElementById("attendance-list"),
+  attendanceHint: document.getElementById("attendance-hint"),
+  directoryList: document.getElementById("directory-list"),
+  directoryPanel: document.getElementById("directory-panel"),
+  toggleDirectory: document.getElementById("toggle-directory"),
   peopleInput: document.getElementById("person-input"),
   teamInput: document.getElementById("team-input"),
   addPersonBtn: document.getElementById("add-person-btn"),
@@ -50,6 +54,15 @@ const DEFAULT_PEOPLE = [];
 const LATE_REGEX = /\blate\b/i;
 const TEAM_FILTER_ALL = "__all__";
 const TEAM_FILTER_UNASSIGNED = "__unassigned__";
+const AUTO_SAVE_DELAY_MS = 20000;
+const WEEKDAYS = [
+  { key: "mon", label: "M", full: "Monday", index: 1 },
+  { key: "tue", label: "T", full: "Tuesday", index: 2 },
+  { key: "wed", label: "W", full: "Wednesday", index: 3 },
+  { key: "thu", label: "T", full: "Thursday", index: 4 },
+  { key: "fri", label: "F", full: "Friday", index: 5 },
+];
+const DEFAULT_AVAILABILITY = WEEKDAYS.map((day) => day.key);
 
 const state = {
   currentDate: todayISO(),
@@ -61,6 +74,7 @@ const state = {
   dirty: false,
   firebaseReady: false,
   selectedTeam: TEAM_FILTER_ALL,
+  directoryOpen: false,
 };
 
 let db = null;
@@ -69,6 +83,8 @@ let unsubscribeAttendance = null;
 let unsubscribePeople = null;
 let unsubscribeMonth = null;
 let peopleMessageTimer = null;
+let autoSaveTimer = null;
+let saveInProgress = false;
 const removeConfirmTimers = new WeakMap();
 const REMOVE_CONFIRM_MS = 3500;
 
@@ -80,6 +96,11 @@ async function init() {
   elements.saveBtn.addEventListener("click", onSave);
   elements.addPersonBtn.addEventListener("click", addPersonFromInput);
   elements.teamFilter.addEventListener("change", onTeamFilterChange);
+  if (elements.toggleDirectory) {
+    elements.toggleDirectory.addEventListener("click", () => {
+      setDirectoryOpen(!state.directoryOpen);
+    });
+  }
   elements.peopleInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       addPersonFromInput(event);
@@ -89,6 +110,7 @@ async function init() {
   elements.nextMonth.addEventListener("click", () => shiftMonth(1));
   elements.exportBtn.addEventListener("click", exportBackup);
   elements.importFile.addEventListener("change", importBackup);
+  setDirectoryOpen(state.directoryOpen);
 
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("sw.js");
@@ -149,11 +171,12 @@ function onDateChange(event) {
   state.currentDate = event.target.value;
   state.dirty = false;
   setSaveStatus("");
+  clearAutoSaveTimer();
   if (state.firebaseReady) {
     listenAttendance(state.currentDate);
   } else {
     hydrateAttendanceFromLocal();
-    renderPeopleList();
+    renderAttendanceList();
   }
 }
 
@@ -185,6 +208,18 @@ function setPeopleMessage(message, tone = "muted") {
       elements.peopleMessage.textContent = "";
       elements.peopleMessage.dataset.tone = "muted";
     }, 3500);
+  }
+}
+
+function setDirectoryOpen(open) {
+  state.directoryOpen = Boolean(open);
+  if (elements.directoryPanel) {
+    elements.directoryPanel.hidden = !state.directoryOpen;
+  }
+  if (elements.toggleDirectory) {
+    elements.toggleDirectory.textContent = state.directoryOpen
+      ? "Close directory"
+      : "Edit profiles";
   }
 }
 
@@ -223,7 +258,8 @@ async function addPersonFromInput(event) {
     elements.teamInput.value = cleanedTeam;
   }
   await savePeople();
-  renderPeopleList();
+  renderDirectoryList();
+  renderAttendanceList();
   setPeopleMessage(
     cleanedTeam ? `Added ${cleaned} to ${cleanedTeam}.` : `Added ${cleaned}.`,
     "success"
@@ -274,15 +310,47 @@ function sanitizePeopleList(people) {
 
     const team =
       typeof raw === "string" ? "" : normalizeTeam(raw.team || "");
+    const availability =
+      typeof raw === "string"
+        ? [...DEFAULT_AVAILABILITY]
+        : normalizeAvailability(raw.availability);
 
     list.push({
       id: candidate,
       name,
       team,
+      availability,
     });
   });
 
   return list;
+}
+
+function normalizeAvailability(value) {
+  if (value === undefined || value === null) {
+    return [...DEFAULT_AVAILABILITY];
+  }
+
+  if (!Array.isArray(value)) {
+    return [...DEFAULT_AVAILABILITY];
+  }
+
+  const valid = new Set(WEEKDAYS.map((day) => day.key));
+  const cleaned = [];
+  value.forEach((entry) => {
+    if (!entry) {
+      return;
+    }
+    const key = String(entry).toLowerCase();
+    if (!valid.has(key)) {
+      return;
+    }
+    if (!cleaned.includes(key)) {
+      cleaned.push(key);
+    }
+  });
+
+  return cleaned;
 }
 
 function createPerson(name, team) {
@@ -300,11 +368,25 @@ function createPerson(name, team) {
     id: candidate,
     name,
     team: normalizeTeam(team),
+    availability: [...DEFAULT_AVAILABILITY],
   };
 }
 
+function getWeekdayKey(dateISO) {
+  const date = new Date(`${dateISO}T00:00:00`);
+  const day = date.getDay();
+  const match = WEEKDAYS.find((entry) => entry.index === day);
+  return match ? match.key : null;
+}
+
+function getWeekdayLabel(dateISO) {
+  const date = new Date(`${dateISO}T00:00:00`);
+  return date.toLocaleDateString("en-US", { weekday: "long" });
+}
+
 function renderAll() {
-  renderPeopleList();
+  renderDirectoryList();
+  renderAttendanceList();
   renderCalendar();
   renderTrends();
 }
@@ -377,7 +459,7 @@ function syncTeamInputWithFilter() {
 function onTeamFilterChange(event) {
   state.selectedTeam = event.target.value;
   syncTeamInputWithFilter();
-  renderPeopleList();
+  renderAttendanceList();
 }
 
 function filterPeopleByTeam(people) {
@@ -395,37 +477,24 @@ function filterPeopleByTeam(people) {
   );
 }
 
-function renderPeopleList() {
-  renderTeamFilter();
-  elements.peopleList.innerHTML = "";
+function renderDirectoryList() {
+  if (!elements.directoryList) {
+    return;
+  }
+
+  elements.directoryList.innerHTML = "";
 
   if (!state.people.length) {
     const empty = document.createElement("div");
     empty.className = "hint";
     empty.textContent = "No people yet. Add someone above to get started.";
-    elements.peopleList.appendChild(empty);
+    elements.directoryList.appendChild(empty);
     return;
   }
 
-  const visiblePeople = filterPeopleByTeam(state.people);
-
-  if (!visiblePeople.length) {
-    const empty = document.createElement("div");
-    empty.className = "hint";
-    if (state.selectedTeam === TEAM_FILTER_UNASSIGNED) {
-      empty.textContent = "No unassigned people yet.";
-    } else if (state.selectedTeam === TEAM_FILTER_ALL) {
-      empty.textContent = "No people yet. Add someone above to get started.";
-    } else {
-      empty.textContent = `No people in ${state.selectedTeam} yet.`;
-    }
-    elements.peopleList.appendChild(empty);
-    return;
-  }
-
-  visiblePeople.forEach((person) => {
+  state.people.forEach((person) => {
     const row = document.createElement("div");
-    row.className = "person-row";
+    row.className = "person-row directory";
     row.dataset.personId = person.id;
 
     const identity = document.createElement("div");
@@ -441,30 +510,23 @@ function renderPeopleList() {
     teamInput.value = person.team || "";
     teamInput.setAttribute("aria-label", `Team for ${person.name}`);
 
-    const statusGroup = document.createElement("div");
-    statusGroup.className = "status-group";
+    const availabilityGroup = document.createElement("div");
+    availabilityGroup.className = "availability-group";
+    const availability = normalizeAvailability(person.availability);
 
-    const hereBtn = createStatusButton("✓", "here");
-    const notBtn = createStatusButton("✗", "not");
-    const clearBtn = document.createElement("button");
-    clearBtn.className = "clear-btn";
-    clearBtn.type = "button";
-    clearBtn.textContent = "–";
-
-    statusGroup.append(hereBtn, notBtn, clearBtn);
-
-    const note = document.createElement("input");
-    note.className = "note-input";
-    note.placeholder = "Note";
-    note.value = getEntry(person.id).note || "";
-
-    const subGroup = document.createElement("div");
-    subGroup.className = "sub-group";
-
-    const amBtn = createSubButton("AM", "am");
-    const pmBtn = createSubButton("PM", "pm");
-
-    subGroup.append(amBtn, pmBtn);
+    WEEKDAYS.forEach((day) => {
+      const button = document.createElement("button");
+      button.className = "avail-btn";
+      button.type = "button";
+      button.textContent = day.label;
+      button.dataset.day = day.key;
+      button.setAttribute("aria-label", `${person.name} available ${day.full}`);
+      button.classList.toggle("active", availability.includes(day.key));
+      button.addEventListener("click", () => {
+        toggleAvailability(person.id, day.key, button);
+      });
+      availabilityGroup.appendChild(button);
+    });
 
     const removeBtn = document.createElement("button");
     removeBtn.className = "remove-btn";
@@ -472,14 +534,6 @@ function renderPeopleList() {
     removeBtn.textContent = "Remove";
     removeBtn.setAttribute("aria-label", `Remove ${person.name}`);
 
-    hereBtn.addEventListener("click", () => toggleStatus(person.id, "here"));
-    notBtn.addEventListener("click", () => toggleStatus(person.id, "not"));
-    clearBtn.addEventListener("click", () => clearStatus(person.id));
-    amBtn.addEventListener("click", () => cycleMeeting(person.id, "am"));
-    pmBtn.addEventListener("click", () => cycleMeeting(person.id, "pm"));
-    note.addEventListener("input", (event) => {
-      setNote(person.id, event.target.value);
-    });
     teamInput.addEventListener("change", (event) => {
       updatePersonTeam(person.id, event.target.value);
     });
@@ -494,8 +548,103 @@ function renderPeopleList() {
     });
 
     identity.append(name, teamInput);
-    row.append(identity, statusGroup, note, subGroup, removeBtn);
-    elements.peopleList.appendChild(row);
+    row.append(identity, availabilityGroup, removeBtn);
+    elements.directoryList.appendChild(row);
+  });
+}
+
+function renderAttendanceList() {
+  if (!elements.attendanceList) {
+    return;
+  }
+
+  renderTeamFilter();
+  elements.attendanceList.innerHTML = "";
+
+  const weekdayKey = getWeekdayKey(state.currentDate);
+
+  if (elements.attendanceHint) {
+    const weekday = getWeekdayLabel(state.currentDate);
+    if (weekdayKey) {
+      elements.attendanceHint.textContent = weekday;
+    } else {
+      elements.attendanceHint.textContent = `${weekday} (no schedule)`;
+    }
+  }
+
+  if (!state.people.length) {
+    const empty = document.createElement("div");
+    empty.className = "hint";
+    empty.textContent = "No people yet. Add someone in the directory to get started.";
+    elements.attendanceList.appendChild(empty);
+    return;
+  }
+
+  const visiblePeople = filterPeopleByTeam(state.people).filter((person) => {
+    if (!weekdayKey) {
+      return false;
+    }
+    const availability = normalizeAvailability(person.availability);
+    return availability.includes(weekdayKey);
+  });
+
+  if (!visiblePeople.length) {
+    const empty = document.createElement("div");
+    empty.className = "hint";
+    if (!weekdayKey) {
+      empty.textContent = "No one scheduled for weekends.";
+    } else if (state.selectedTeam === TEAM_FILTER_UNASSIGNED) {
+      empty.textContent = "No unassigned people scheduled today.";
+    } else if (state.selectedTeam === TEAM_FILTER_ALL) {
+      empty.textContent = "No one scheduled today.";
+    } else {
+      empty.textContent = `No one in ${state.selectedTeam} scheduled today.`;
+    }
+    elements.attendanceList.appendChild(empty);
+    return;
+  }
+
+  visiblePeople.forEach((person) => {
+    const row = document.createElement("div");
+    row.className = "person-row attendance";
+    row.dataset.personId = person.id;
+
+    const name = document.createElement("div");
+    name.className = "person-name";
+    name.textContent = person.name;
+
+    const statusGroup = document.createElement("div");
+    statusGroup.className = "status-group";
+
+    const hereBtn = createStatusButton("✓", "here");
+    const tardyBtn = createStatusButton("T", "tardy");
+    const notBtn = createStatusButton("✗", "not");
+    statusGroup.append(hereBtn, tardyBtn, notBtn);
+
+    const note = document.createElement("input");
+    note.className = "note-input";
+    note.placeholder = "Note";
+    note.value = getEntry(person.id).note || "";
+
+    const subGroup = document.createElement("div");
+    subGroup.className = "sub-group";
+
+    const amBtn = createSubButton("AM", "am");
+    const pmBtn = createSubButton("PM", "pm");
+
+    subGroup.append(amBtn, pmBtn);
+
+    hereBtn.addEventListener("click", () => toggleStatus(person.id, "here"));
+    tardyBtn.addEventListener("click", () => toggleStatus(person.id, "tardy"));
+    notBtn.addEventListener("click", () => toggleStatus(person.id, "not"));
+    amBtn.addEventListener("click", () => cycleMeeting(person.id, "am"));
+    pmBtn.addEventListener("click", () => cycleMeeting(person.id, "pm"));
+    note.addEventListener("input", (event) => {
+      setNote(person.id, event.target.value);
+    });
+
+    row.append(name, statusGroup, note, subGroup);
+    elements.attendanceList.appendChild(row);
 
     applyRowState(person.id, row);
   });
@@ -561,7 +710,8 @@ async function removePerson(personId) {
   const [removed] = state.people.splice(index, 1);
   delete state.attendance[personId];
   await savePeople();
-  renderPeopleList();
+  renderDirectoryList();
+  renderAttendanceList();
   markDirty();
   setPeopleMessage(`${removed.name} removed.`, "muted");
 }
@@ -579,18 +729,46 @@ async function updatePersonTeam(personId, value) {
 
   person.team = nextTeam;
   await savePeople();
-  renderPeopleList();
+  renderDirectoryList();
+  renderAttendanceList();
   setPeopleMessage(
     nextTeam ? `${person.name} set to ${nextTeam}.` : `${person.name} unassigned.`,
     "muted"
   );
 }
 
+async function toggleAvailability(personId, dayKey, button) {
+  const person = state.people.find((entry) => entry.id === personId);
+  if (!person) {
+    return;
+  }
+
+  const availability = normalizeAvailability(person.availability);
+  const index = availability.indexOf(dayKey);
+  if (index === -1) {
+    availability.push(dayKey);
+  } else {
+    availability.splice(index, 1);
+  }
+
+  person.availability = availability;
+  if (button) {
+    button.classList.toggle("active", availability.includes(dayKey));
+  }
+
+  await savePeople();
+  renderAttendanceList();
+}
+
 function applyRowState(personId, row) {
   const entry = getEntry(personId);
   const hereBtn = row.querySelector(".status-btn.here");
+  const tardyBtn = row.querySelector(".status-btn.tardy");
   const notBtn = row.querySelector(".status-btn.not");
   hereBtn.classList.toggle("active", entry.status === "here");
+  if (tardyBtn) {
+    tardyBtn.classList.toggle("active", entry.status === "tardy");
+  }
   notBtn.classList.toggle("active", entry.status === "not");
 
   const amBtn = row.querySelector(".sub-btn[data-field='am']");
@@ -651,7 +829,10 @@ function setNote(personId, value) {
 }
 
 function refreshRow(personId) {
-  const row = elements.peopleList.querySelector(
+  if (!elements.attendanceList) {
+    return;
+  }
+  const row = elements.attendanceList.querySelector(
     `.person-row[data-person-id='${personId}']`
   );
   if (!row) {
@@ -665,25 +846,54 @@ function markDirty() {
     state.dirty = true;
     setSaveStatus("Unsaved changes");
   }
+  scheduleAutoSave();
 }
 
 function setSaveStatus(message) {
   elements.saveStatus.textContent = message;
 }
 
+function clearAutoSaveTimer() {
+  if (!autoSaveTimer) {
+    return;
+  }
+  clearTimeout(autoSaveTimer);
+  autoSaveTimer = null;
+}
+
+function scheduleAutoSave() {
+  clearAutoSaveTimer();
+  autoSaveTimer = setTimeout(async () => {
+    autoSaveTimer = null;
+    if (!state.dirty || saveInProgress) {
+      return;
+    }
+    await onSave();
+  }, AUTO_SAVE_DELAY_MS);
+}
+
 async function onSave() {
+  if (saveInProgress) {
+    return;
+  }
+  saveInProgress = true;
   const payload = buildAttendancePayload();
 
-  if (state.firebaseReady) {
-    await saveAttendance(state.currentDate, payload);
+  try {
+    if (state.firebaseReady) {
+      await saveAttendance(state.currentDate, payload);
+    }
+
+    saveLocalBackup(payload, state.currentDate);
+    state.dirty = false;
+    setSaveStatus(`Saved ${new Date().toLocaleTimeString()}`);
+    clearAutoSaveTimer();
+
+    await loadMonth(state.monthCursor);
+    await loadTrends();
+  } finally {
+    saveInProgress = false;
   }
-
-  saveLocalBackup(payload, state.currentDate);
-  state.dirty = false;
-  setSaveStatus(`Saved ${new Date().toLocaleTimeString()}`);
-
-  await loadMonth(state.monthCursor);
-  await loadTrends();
 }
 
 function buildAttendancePayload() {
@@ -741,12 +951,14 @@ function listenPeople() {
       if (!state.people.length && DEFAULT_PEOPLE.length) {
         state.people = sanitizePeopleList(DEFAULT_PEOPLE);
       }
-      renderPeopleList();
+      renderDirectoryList();
+      renderAttendanceList();
       return;
     }
 
     state.people = sanitizePeopleList(data.people);
-    renderPeopleList();
+    renderDirectoryList();
+    renderAttendanceList();
   });
 }
 
@@ -763,13 +975,13 @@ function listenAttendance(date) {
     const data = snapshot.data();
     if (!data) {
       state.attendance = {};
-      renderPeopleList();
+      renderAttendanceList();
       setSaveStatus("");
       return;
     }
 
     state.attendance = mapAttendanceEntries(data.people || {});
-    renderPeopleList();
+    renderAttendanceList();
     setSaveStatus("Loaded");
   });
 }
@@ -949,7 +1161,7 @@ function createCalendarCell(payload) {
       listenAttendance(dateKey);
     } else {
       hydrateAttendanceFromLocal();
-      renderPeopleList();
+      renderAttendanceList();
     }
   });
 
@@ -967,7 +1179,7 @@ function countAttendance(peopleData) {
     }
     if (entry.status) {
       total += 1;
-      if (entry.status === "here") {
+      if (entry.status === "here" || entry.status === "tardy") {
         hereCount += 1;
       }
     }
@@ -1009,56 +1221,90 @@ function addDays(dateString, delta) {
 function renderTrends() {
   elements.trendsList.innerHTML = "";
 
-  if (!state.trendsAttendance.length) {
+  if (!state.people.length) {
     const empty = document.createElement("div");
     empty.className = "hint";
-    empty.textContent = "No attendance data yet.";
+    empty.textContent = "No profiles in the directory yet.";
     elements.trendsList.appendChild(empty);
     return;
   }
 
   const stats = new Map();
 
+  state.people.forEach((person) => {
+    stats.set(person.id, {
+      id: person.id,
+      name: person.name,
+      here: 0,
+      not: 0,
+      total: 0,
+      tardy: 0,
+    });
+  });
+
   state.trendsAttendance.forEach((entry) => {
     if (!entry?.people) {
       return;
     }
     Object.entries(entry.people).forEach(([id, personEntry]) => {
-      const name = personEntry.name || id;
-      const record = stats.get(id) || {
-        id,
-        name,
-        here: 0,
-        not: 0,
-        total: 0,
-        late: 0,
-      };
+      const record = stats.get(id);
+      if (!record) {
+        return;
+      }
 
       if (personEntry.status) {
         record.total += 1;
-        if (personEntry.status === "here") {
+        if (personEntry.status === "here" || personEntry.status === "tardy") {
           record.here += 1;
         } else if (personEntry.status === "not") {
           record.not += 1;
         }
+        if (personEntry.status === "tardy") {
+          record.tardy += 1;
+        }
       }
 
-      if (personEntry.note && LATE_REGEX.test(personEntry.note)) {
-        record.late += 1;
+      if (
+        personEntry.note &&
+        LATE_REGEX.test(personEntry.note) &&
+        personEntry.status !== "tardy"
+      ) {
+        record.tardy += 1;
       }
-
-      stats.set(id, record);
     });
   });
 
-  const sorted = Array.from(stats.values()).sort((a, b) => {
-    if (b.total !== a.total) {
-      return b.total - a.total;
-    }
-    return a.name.localeCompare(b.name);
-  });
+  const sorted = Array.from(stats.values()).sort((a, b) =>
+    a.name.localeCompare(b.name)
+  );
+
+  const hasAnyData = sorted.some(
+    (record) => record.total > 0 || record.tardy > 0
+  );
+
+  if (!hasAnyData) {
+    const empty = document.createElement("div");
+    empty.className = "hint";
+    empty.textContent = "No attendance data yet for current profiles.";
+    elements.trendsList.appendChild(empty);
+    return;
+  }
+
+  const header = document.createElement("div");
+  header.className = "trend-row trend-header";
+  header.innerHTML = `
+    <div>Person</div>
+    <div class="metric">Here %</div>
+    <div class="metric">Tardy</div>
+    <div class="metric">Not</div>
+    <div class="metric">Total</div>
+  `;
+  elements.trendsList.appendChild(header);
 
   sorted.forEach((record) => {
+    if (record.total === 0 && record.tardy === 0) {
+      return;
+    }
     const row = document.createElement("div");
     row.className = "trend-row";
 
@@ -1066,13 +1312,26 @@ function renderTrends() {
     name.className = "name";
     name.textContent = record.name;
 
-    const detail = document.createElement("div");
     const percent = record.total
       ? Math.round((record.here / record.total) * 100)
       : 0;
-    detail.textContent = `Here ${record.here}/${record.total} (${percent}%), Not ${record.not}, Late ${record.late}`;
+    const here = document.createElement("div");
+    here.className = "metric";
+    here.textContent = `${percent}%`;
 
-    row.append(name, detail);
+    const tardy = document.createElement("div");
+    tardy.className = "metric";
+    tardy.textContent = `${record.tardy}`;
+
+    const not = document.createElement("div");
+    not.className = "metric";
+    not.textContent = `${record.not}`;
+
+    const total = document.createElement("div");
+    total.className = "metric";
+    total.textContent = `${record.total}`;
+
+    row.append(name, here, tardy, not, total);
     elements.trendsList.appendChild(row);
   });
 }
