@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Attendance Checklist</title>
+    <link rel="stylesheet" href="styles.css" />
+    <link rel="manifest" href="manifest.webmanifest" />
+  </head>
+  <body>
+    <header class="header">
+      <div class="title">Who showed up today?</div>
+      <div class="subtitle">Checklist + shared notebook for attendance.</div>
+    </header>
+
+    <section class="card toolbar">
+      <label class="field">
+        <span>Date</span>
+        <input id="date-picker" type="date" />
+      </label>
+      <button id="save-btn" class="primary">Save</button>
+      <span id="save-status" class="status-text"></span>
+    </section>
+
+    <section class="card">
+      <div class="section-title">
+        <span>People</span>
+        <button id="edit-people-btn" class="ghost">Edit list</button>
+      </div>
+      <div id="people-list" class="people-list"></div>
+    </section>
+
+    <section class="card">
+      <div class="section-title">
+        <span>Calendar</span>
+        <div class="calendar-controls">
+          <button id="prev-month" class="ghost">Prev</button>
+          <div id="month-label" class="month-label"></div>
+          <button id="next-month" class="ghost">Next</button>
+        </div>
+      </div>
+      <div id="calendar-grid" class="calendar-grid"></div>
+    </section>
+
+    <section class="card">
+      <div class="section-title">
+        <span>Trends</span>
+        <span class="hint">Last 90 days</span>
+      </div>
+      <div id="trends-list" class="trends-list"></div>
+    </section>
+
+    <section class="card">
+      <div class="section-title">
+        <span>Backup</span>
+        <span class="hint">JSON export/import</span>
+      </div>
+      <div class="backup-actions">
+        <button id="export-btn" class="ghost">Export JSON</button>
+        <label class="file-label">
+          Import JSON
+          <input id="import-file" type="file" accept="application/json" />
+        </label>
+      </div>
+    </section>
+
+    <section class="card notice" id="config-warning" hidden>
+      <strong>Firebase not configured.</strong>
+      <div>Update <code>app.js</code> with your Firebase config to sync across devices.</div>
+    </section>
+
+    <dialog id="people-dialog" class="people-dialog">
+      <form method="dialog" class="dialog-body">
+        <div class="dialog-title">People list</div>
+        <p class="hint">One name per line.</p>
+        <textarea id="people-textarea" rows="10" spellcheck="false"></textarea>
+        <div class="dialog-actions">
+          <button id="cancel-people" class="ghost" value="cancel">Cancel</button>
+          <button id="save-people" class="primary" value="save">Save list</button>
+        </div>
+      </form>
+    </dialog>
+
+    <footer class="footer">
+      Offline-ready. Changes sync when you reconnect.
+    </footer>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

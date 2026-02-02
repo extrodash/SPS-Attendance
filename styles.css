@@ -1,0 +1,299 @@
+:root {
+  color-scheme: light;
+  --bg: #f7f7f7;
+  --card: #ffffff;
+  --text: #111111;
+  --muted: #6b6b6b;
+  --line: #e6e6e6;
+  --accent: #111111;
+  --good: #1b7f3b;
+  --bad: #b42318;
+  --warn: #b07600;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 28px 20px 60px;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.header {
+  max-width: 980px;
+  margin: 0 auto 24px;
+}
+
+.title {
+  font-size: 28px;
+  font-weight: 650;
+  margin-bottom: 4px;
+}
+
+.subtitle {
+  color: var(--muted);
+}
+
+.card {
+  max-width: 980px;
+  margin: 0 auto 18px;
+  padding: 18px;
+  border-radius: 12px;
+  background: var(--card);
+  border: 1px solid var(--line);
+}
+
+.toolbar {
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.field input {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  min-width: 190px;
+  font-size: 14px;
+}
+
+.primary,
+.ghost {
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 14px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  background: transparent;
+}
+
+.primary {
+  background: var(--accent);
+  color: white;
+}
+
+.ghost {
+  border-color: var(--line);
+  color: var(--text);
+}
+
+.status-text {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.people-list {
+  display: grid;
+  gap: 10px;
+}
+
+.person-row {
+  display: grid;
+  grid-template-columns: 180px auto 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+}
+
+.person-name {
+  font-weight: 600;
+}
+
+.status-group,
+.sub-group {
+  display: flex;
+  gap: 6px;
+}
+
+.status-btn,
+.sub-btn,
+.clear-btn {
+  min-width: 36px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: white;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.status-btn.active.here,
+.sub-btn.active.here {
+  background: rgba(27, 127, 59, 0.15);
+  color: var(--good);
+  border-color: rgba(27, 127, 59, 0.4);
+}
+
+.status-btn.active.not,
+.sub-btn.active.not {
+  background: rgba(180, 35, 24, 0.15);
+  color: var(--bad);
+  border-color: rgba(180, 35, 24, 0.4);
+}
+
+.clear-btn {
+  color: var(--muted);
+}
+
+.note-input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
+.calendar-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.month-label {
+  font-weight: 600;
+}
+
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.calendar-cell {
+  height: 70px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.calendar-cell .day-num {
+  font-weight: 600;
+}
+
+.calendar-cell .day-meta {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.calendar-cell.busy {
+  background: rgba(27, 127, 59, 0.1);
+}
+
+.calendar-cell.slow {
+  background: rgba(180, 35, 24, 0.1);
+}
+
+.trends-list {
+  display: grid;
+  gap: 10px;
+}
+
+.trend-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+}
+
+.trend-row .name {
+  font-weight: 600;
+}
+
+.backup-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.file-label {
+  border: 1px solid var(--line);
+  padding: 8px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.file-label input {
+  display: none;
+}
+
+.notice {
+  border-left: 4px solid var(--warn);
+}
+
+.people-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.dialog-body {
+  display: grid;
+  gap: 12px;
+  min-width: 300px;
+}
+
+.dialog-title {
+  font-weight: 600;
+  font-size: 16px;
+}
+
+.dialog-body textarea {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px;
+  font-family: inherit;
+}
+
+.dialog-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.footer {
+  max-width: 980px;
+  margin: 24px auto 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+@media (max-width: 800px) {
+  .person-row {
+    grid-template-columns: 1fr;
+  }
+}
