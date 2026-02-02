@@ -18,6 +18,10 @@
         <span>Date</span>
         <input id="date-picker" type="date" />
       </label>
+      <label class="field">
+        <span>Team</span>
+        <select id="team-filter" aria-label="Select team"></select>
+      </label>
       <button id="save-btn" class="primary">Save</button>
       <span id="save-status" class="status-text"></span>
     </section>
@@ -34,6 +38,13 @@
             autocomplete="off"
             placeholder="Add a person"
             aria-label="Add a person"
+          />
+          <input
+            id="team-input"
+            type="text"
+            autocomplete="off"
+            placeholder="Team (optional)"
+            aria-label="Team"
           />
           <button id="add-person-btn" class="primary">Add</button>
         </div>

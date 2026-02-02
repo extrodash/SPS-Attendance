@@ -6,6 +6,7 @@
   --muted: #6c6862;
   --line: #e6e1da;
   --accent: #171717;
+  --accent-contrast: #ffffff;
   --accent-soft: #f5f3ef;
   --chip: #f3f1ee;
   --chip-border: #e2ddd6;
@@ -28,6 +29,10 @@ input,
 textarea {
   font-family: inherit;
   color: inherit;
+}
+
+::placeholder {
+  color: var(--muted);
 }
 
 body {
@@ -93,6 +98,16 @@ body {
   transition: border-color 160ms ease, box-shadow 160ms ease;
 }
 
+.field select {
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  min-width: 190px;
+  font-size: 14px;
+  background: var(--card);
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
 .primary,
 .ghost {
   border-radius: 10px;
@@ -109,7 +124,7 @@ body {
 
 .primary {
   background: var(--accent);
-  color: white;
+  color: var(--accent-contrast);
   box-shadow: var(--shadow);
 }
 
@@ -142,6 +157,7 @@ body {
 .primary:focus-visible,
 .ghost:focus-visible,
 input:focus-visible,
+select:focus-visible,
 textarea:focus-visible,
 button:focus-visible {
   outline: 2px solid var(--focus);
@@ -209,7 +225,7 @@ button:focus-visible {
 
 .person-row {
   display: grid;
-  grid-template-columns: minmax(160px, 1fr) auto minmax(180px, 1.2fr) auto auto;
+  grid-template-columns: minmax(180px, 1fr) auto minmax(180px, 1.2fr) auto auto;
   gap: 12px;
   align-items: center;
   padding: 12px 14px;
@@ -221,6 +237,21 @@ button:focus-visible {
 
 .person-name {
   font-weight: 600;
+}
+
+.person-identity {
+  display: grid;
+  gap: 6px;
+}
+
+.team-input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 6px 10px;
+  font-size: 12px;
+  background: var(--card);
+  transition: border-color 160ms ease, box-shadow 160ms ease;
 }
 
 .status-group,
@@ -431,5 +462,79 @@ button:focus-visible {
 
   .title {
     font-size: 26px;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #15181c;
+    --card: #22262c;
+    --text: #f2f5f9;
+    --muted: #aab3bf;
+    --line: #353c45;
+    --accent: #e5ecf6;
+    --accent-contrast: #121417;
+    --accent-soft: #2c333c;
+    --chip: #272d36;
+    --chip-border: #3a424d;
+    --focus: rgba(229, 236, 246, 0.35);
+    --good: #8fd6a9;
+    --bad: #f1a3a3;
+    --warn: #f0c37a;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+    --shadow-strong: 0 12px 28px rgba(0, 0, 0, 0.5);
+  }
+
+  body {
+    background: var(--bg);
+  }
+
+  .primary {
+    border-color: rgba(0, 0, 0, 0.15);
+  }
+
+  .ghost,
+  .file-label,
+  .remove-btn {
+    background: var(--accent-soft);
+    border-color: var(--chip-border);
+  }
+
+  .status-btn,
+  .sub-btn,
+  .clear-btn {
+    background: var(--accent-soft);
+    border-color: var(--chip-border);
+    color: var(--text);
+  }
+
+  .status-btn:not(.active):hover,
+  .sub-btn:not(.active):hover,
+  .clear-btn:hover,
+  .ghost:hover,
+  .file-label:hover,
+  .remove-btn:hover {
+    background: #3a424d;
+  }
+
+  .note-input,
+  .people-input input,
+  .field input,
+  .field select,
+  .team-input {
+    background: #1c2026;
+    border-color: var(--line);
+  }
+
+  .calendar-cell,
+  .trend-row,
+  .person-row,
+  .card {
+    border-color: var(--line);
+  }
+
+  .notice {
+    background: #2b313a;
   }
 }

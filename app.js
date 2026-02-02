@@ -29,8 +29,10 @@ const elements = {
   datePicker: document.getElementById("date-picker"),
   saveBtn: document.getElementById("save-btn"),
   saveStatus: document.getElementById("save-status"),
+  teamFilter: document.getElementById("team-filter"),
   peopleList: document.getElementById("people-list"),
   peopleInput: document.getElementById("person-input"),
+  teamInput: document.getElementById("team-input"),
   addPersonBtn: document.getElementById("add-person-btn"),
   peopleMessage: document.getElementById("people-message"),
   configWarning: document.getElementById("config-warning"),
@@ -46,6 +48,8 @@ const elements = {
 const LOCAL_KEY = "attendance-app-data-v1";
 const DEFAULT_PEOPLE = [];
 const LATE_REGEX = /\blate\b/i;
+const TEAM_FILTER_ALL = "__all__";
+const TEAM_FILTER_UNASSIGNED = "__unassigned__";
 
 const state = {
   currentDate: todayISO(),
@@ -56,6 +60,7 @@ const state = {
   trendsAttendance: [],
   dirty: false,
   firebaseReady: false,
+  selectedTeam: TEAM_FILTER_ALL,
 };
 
 let db = null;
@@ -74,6 +79,7 @@ async function init() {
   elements.datePicker.addEventListener("change", onDateChange);
   elements.saveBtn.addEventListener("click", onSave);
   elements.addPersonBtn.addEventListener("click", addPersonFromInput);
+  elements.teamFilter.addEventListener("change", onTeamFilterChange);
   elements.peopleInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       addPersonFromInput(event);
@@ -155,6 +161,13 @@ function normalizeName(value) {
   return value.replace(/\s+/g, " ").trim();
 }
 
+function normalizeTeam(value) {
+  if (!value) {
+    return "";
+  }
+  return value.replace(/\s+/g, " ").trim();
+}
+
 function setPeopleMessage(message, tone = "muted") {
   if (!elements.peopleMessage) {
     return;
@@ -182,6 +195,13 @@ async function addPersonFromInput(event) {
 
   const raw = elements.peopleInput.value || "";
   const cleaned = normalizeName(raw);
+  const teamInput = elements.teamInput?.value || "";
+  const fallbackTeam =
+    state.selectedTeam !== TEAM_FILTER_ALL &&
+    state.selectedTeam !== TEAM_FILTER_UNASSIGNED
+      ? state.selectedTeam
+      : "";
+  const cleanedTeam = normalizeTeam(teamInput || fallbackTeam);
 
   if (!cleaned) {
     setPeopleMessage("Enter a name to add.", "warn");
@@ -197,44 +217,17 @@ async function addPersonFromInput(event) {
     return;
   }
 
-  state.people = buildPeopleList([...state.people.map((person) => person.name), cleaned]);
+  state.people = [...state.people, createPerson(cleaned, cleanedTeam)];
   elements.peopleInput.value = "";
+  if (elements.teamInput && elements.teamInput.value !== cleanedTeam) {
+    elements.teamInput.value = cleanedTeam;
+  }
   await savePeople();
   renderPeopleList();
-  setPeopleMessage(`Added ${cleaned}.`, "success");
-}
-
-function buildPeopleList(names) {
-  if (names.length === 0) {
-    return [];
-  }
-
-  const existing = new Map(
-    state.people.map((person) => [person.name.toLowerCase(), person])
+  setPeopleMessage(
+    cleanedTeam ? `Added ${cleaned} to ${cleanedTeam}.` : `Added ${cleaned}.`,
+    "success"
   );
-  const usedIds = new Set();
-  const list = [];
-
-  names.forEach((name) => {
-    const key = name.toLowerCase();
-    const match = existing.get(key);
-    if (match) {
-      list.push({ id: match.id, name: match.name });
-      usedIds.add(match.id);
-      return;
-    }
-
-    let id = slugify(name);
-    let suffix = 2;
-    while (usedIds.has(id)) {
-      id = `${slugify(name)}-${suffix}`;
-      suffix += 1;
-    }
-    usedIds.add(id);
-    list.push({ id, name });
-  });
-
-  return list;
 }
 
 function slugify(text) {
@@ -244,13 +237,166 @@ function slugify(text) {
     .replace(/(^-|-$)/g, "");
 }
 
+function sanitizePeopleList(people) {
+  if (!Array.isArray(people)) {
+    return [];
+  }
+
+  const usedIds = new Set();
+  const list = [];
+
+  people.forEach((raw) => {
+    if (!raw) {
+      return;
+    }
+
+    const name = normalizeName(typeof raw === "string" ? raw : raw.name || "");
+    if (!name) {
+      return;
+    }
+
+    let id =
+      typeof raw === "string"
+        ? slugify(name)
+        : raw.id || slugify(name);
+
+    if (!id) {
+      id = `person-${list.length + 1}`;
+    }
+
+    let candidate = id;
+    let suffix = 2;
+    while (usedIds.has(candidate)) {
+      candidate = `${id}-${suffix}`;
+      suffix += 1;
+    }
+    usedIds.add(candidate);
+
+    const team =
+      typeof raw === "string" ? "" : normalizeTeam(raw.team || "");
+
+    list.push({
+      id: candidate,
+      name,
+      team,
+    });
+  });
+
+  return list;
+}
+
+function createPerson(name, team) {
+  const usedIds = new Set(state.people.map((person) => person.id));
+  const baseId = slugify(name);
+  let candidate = baseId || `person-${Date.now()}`;
+  let suffix = 2;
+
+  while (usedIds.has(candidate)) {
+    candidate = baseId ? `${baseId}-${suffix}` : `person-${suffix}`;
+    suffix += 1;
+  }
+
+  return {
+    id: candidate,
+    name,
+    team: normalizeTeam(team),
+  };
+}
+
 function renderAll() {
   renderPeopleList();
   renderCalendar();
   renderTrends();
 }
 
+function getTeamOptions() {
+  const teams = new Map();
+  state.people.forEach((person) => {
+    const team = normalizeTeam(person.team);
+    if (!team) {
+      return;
+    }
+    const key = team.toLowerCase();
+    if (!teams.has(key)) {
+      teams.set(key, team);
+    }
+  });
+
+  return Array.from(teams.values()).sort((a, b) => a.localeCompare(b));
+}
+
+function renderTeamFilter() {
+  if (!elements.teamFilter) {
+    return;
+  }
+
+  const teams = getTeamOptions();
+  elements.teamFilter.innerHTML = "";
+
+  const allOption = new Option("All teams", TEAM_FILTER_ALL);
+  elements.teamFilter.add(allOption);
+
+  teams.forEach((team) => {
+    elements.teamFilter.add(new Option(team, team));
+  });
+
+  elements.teamFilter.add(new Option("Unassigned", TEAM_FILTER_UNASSIGNED));
+
+  if (state.selectedTeam === TEAM_FILTER_ALL || state.selectedTeam === TEAM_FILTER_UNASSIGNED) {
+    elements.teamFilter.value = state.selectedTeam;
+    return;
+  }
+
+  const match = teams.find(
+    (team) => team.toLowerCase() === state.selectedTeam.toLowerCase()
+  );
+  if (match) {
+    state.selectedTeam = match;
+    elements.teamFilter.value = match;
+  } else {
+    state.selectedTeam = TEAM_FILTER_ALL;
+    elements.teamFilter.value = TEAM_FILTER_ALL;
+  }
+}
+
+function syncTeamInputWithFilter() {
+  if (!elements.teamInput) {
+    return;
+  }
+  if (elements.teamInput.value) {
+    return;
+  }
+  if (
+    state.selectedTeam !== TEAM_FILTER_ALL &&
+    state.selectedTeam !== TEAM_FILTER_UNASSIGNED
+  ) {
+    elements.teamInput.value = state.selectedTeam;
+  }
+}
+
+function onTeamFilterChange(event) {
+  state.selectedTeam = event.target.value;
+  syncTeamInputWithFilter();
+  renderPeopleList();
+}
+
+function filterPeopleByTeam(people) {
+  if (state.selectedTeam === TEAM_FILTER_ALL) {
+    return people;
+  }
+
+  if (state.selectedTeam === TEAM_FILTER_UNASSIGNED) {
+    return people.filter((person) => !normalizeTeam(person.team));
+  }
+
+  const target = state.selectedTeam.toLowerCase();
+  return people.filter(
+    (person) => normalizeTeam(person.team).toLowerCase() === target
+  );
+}
+
 function renderPeopleList() {
+  renderTeamFilter();
   elements.peopleList.innerHTML = "";
 
   if (!state.people.length) {
@@ -261,14 +407,39 @@ function renderPeopleList() {
     return;
   }
 
-  state.people.forEach((person) => {
+  const visiblePeople = filterPeopleByTeam(state.people);
+
+  if (!visiblePeople.length) {
+    const empty = document.createElement("div");
+    empty.className = "hint";
+    if (state.selectedTeam === TEAM_FILTER_UNASSIGNED) {
+      empty.textContent = "No unassigned people yet.";
+    } else if (state.selectedTeam === TEAM_FILTER_ALL) {
+      empty.textContent = "No people yet. Add someone above to get started.";
+    } else {
+      empty.textContent = `No people in ${state.selectedTeam} yet.`;
+    }
+    elements.peopleList.appendChild(empty);
+    return;
+  }
+
+  visiblePeople.forEach((person) => {
     const row = document.createElement("div");
     row.className = "person-row";
     row.dataset.personId = person.id;
 
+    const identity = document.createElement("div");
+    identity.className = "person-identity";
+
     const name = document.createElement("div");
     name.className = "person-name";
     name.textContent = person.name;
+
+    const teamInput = document.createElement("input");
+    teamInput.className = "team-input";
+    teamInput.placeholder = "Team";
+    teamInput.value = person.team || "";
+    teamInput.setAttribute("aria-label", `Team for ${person.name}`);
 
     const statusGroup = document.createElement("div");
     statusGroup.className = "status-group";
@@ -309,11 +480,21 @@ function renderPeopleList() {
     note.addEventListener("input", (event) => {
       setNote(person.id, event.target.value);
     });
+    teamInput.addEventListener("change", (event) => {
+      updatePersonTeam(person.id, event.target.value);
+    });
+    teamInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        teamInput.blur();
+      }
+    });
     removeBtn.addEventListener("click", () => {
       requestRemovePerson(person.id, person.name, removeBtn);
     });
 
-    row.append(name, statusGroup, note, subGroup, removeBtn);
+    identity.append(name, teamInput);
+    row.append(identity, statusGroup, note, subGroup, removeBtn);
     elements.peopleList.appendChild(row);
 
     applyRowState(person.id, row);
@@ -383,6 +564,26 @@ async function removePerson(personId) {
   renderPeopleList();
   markDirty();
   setPeopleMessage(`${removed.name} removed.`, "muted");
+}
+
+async function updatePersonTeam(personId, value) {
+  const person = state.people.find((entry) => entry.id === personId);
+  if (!person) {
+    return;
+  }
+
+  const nextTeam = normalizeTeam(value);
+  if (person.team === nextTeam) {
+    return;
+  }
+
+  person.team = nextTeam;
+  await savePeople();
+  renderPeopleList();
+  setPeopleMessage(
+    nextTeam ? `${person.name} set to ${nextTeam}.` : `${person.name} unassigned.`,
+    "muted"
+  );
 }
 
 function applyRowState(personId, row) {
@@ -538,13 +739,13 @@ function listenPeople() {
     const data = snapshot.data();
     if (!data || !data.people) {
       if (!state.people.length && DEFAULT_PEOPLE.length) {
-        state.people = buildPeopleList(DEFAULT_PEOPLE);
+        state.people = sanitizePeopleList(DEFAULT_PEOPLE);
       }
       renderPeopleList();
       return;
     }
 
-    state.people = data.people;
+    state.people = sanitizePeopleList(data.people);
     renderPeopleList();
   });
 }
@@ -588,10 +789,9 @@ function mapAttendanceEntries(peopleData) {
 
 function hydrateFromLocal() {
   const local = loadLocalStore();
-  state.people = local.people || DEFAULT_PEOPLE.map((name) => ({
-    id: slugify(name),
-    name,
-  }));
+  const basePeople =
+    local.people && local.people.length ? local.people : DEFAULT_PEOPLE;
+  state.people = sanitizePeopleList(basePeople);
   state.attendance = local.attendance?.[state.currentDate] || {};
   state.monthAttendance = local.attendance || {};
   renderAll();
@@ -911,12 +1111,14 @@ async function importBackup(event) {
       throw new Error("Invalid backup format");
     }
 
+    const people = sanitizePeopleList(data.people);
+
     saveLocalStore({
-      people: data.people,
+      people,
       attendance: data.attendance,
     });
 
-    state.people = data.people;
+    state.people = people;
     state.attendance = data.attendance[state.currentDate] || {};
     state.monthAttendance = data.attendance || {};
     renderAll();
