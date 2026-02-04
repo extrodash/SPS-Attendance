@@ -108,8 +108,12 @@ async function init() {
   });
   elements.prevMonth.addEventListener("click", () => shiftMonth(-1));
   elements.nextMonth.addEventListener("click", () => shiftMonth(1));
-  elements.exportBtn.addEventListener("click", exportBackup);
-  elements.importFile.addEventListener("change", importBackup);
+  if (elements.exportBtn) {
+    elements.exportBtn.addEventListener("click", exportBackup);
+  }
+  if (elements.importFile) {
+    elements.importFile.addEventListener("change", importBackup);
+  }
   setDirectoryOpen(state.directoryOpen);
 
   if ("serviceWorker" in navigator) {
