@@ -35,6 +35,7 @@ const elements = {
   directoryList: document.getElementById("directory-list"),
   directoryPanel: document.getElementById("directory-panel"),
   toggleDirectory: document.getElementById("toggle-directory"),
+  directoryTeamFilter: document.getElementById("directory-team-filter"),
   peopleInput: document.getElementById("person-input"),
   teamInput: document.getElementById("team-input"),
   addPersonBtn: document.getElementById("add-person-btn"),
@@ -47,12 +48,13 @@ const elements = {
   trendsList: document.getElementById("trends-list"),
   exportBtn: document.getElementById("export-btn"),
   importFile: document.getElementById("import-file"),
+  teamFilterAllBtn: document.getElementById("team-filter-all"),
 };
 
 const LOCAL_KEY = "attendance-app-data-v1";
 const DEFAULT_PEOPLE = [];
-const LATE_REGEX = /\blate\b/i;
 const TEAM_FILTER_ALL = "__all__";
+const TEAM_FILTER_NONE = "__none__";
 const TEAM_FILTER_UNASSIGNED = "__unassigned__";
 const AUTO_SAVE_DELAY_MS = 20000;
 const WEEKDAYS = [
@@ -73,7 +75,9 @@ const state = {
   trendsAttendance: [],
   dirty: false,
   firebaseReady: false,
-  selectedTeam: TEAM_FILTER_ALL,
+  selectedTeam: TEAM_FILTER_NONE,
+  teamFilterAll: false,
+  directoryTeamFilter: TEAM_FILTER_ALL,
   directoryOpen: false,
 };
 
@@ -87,6 +91,7 @@ let autoSaveTimer = null;
 let saveInProgress = false;
 const removeConfirmTimers = new WeakMap();
 const REMOVE_CONFIRM_MS = 3500;
+const meetingStatusPrompted = new Set();
 
 init();
 
@@ -96,6 +101,15 @@ async function init() {
   elements.saveBtn.addEventListener("click", onSave);
   elements.addPersonBtn.addEventListener("click", addPersonFromInput);
   elements.teamFilter.addEventListener("change", onTeamFilterChange);
+  if (elements.teamFilterAllBtn) {
+    elements.teamFilterAllBtn.addEventListener("click", toggleTeamFilterAll);
+  }
+  if (elements.directoryTeamFilter) {
+    elements.directoryTeamFilter.addEventListener(
+      "change",
+      onDirectoryTeamFilterChange
+    );
+  }
   if (elements.toggleDirectory) {
     elements.toggleDirectory.addEventListener("click", () => {
       setDirectoryOpen(!state.directoryOpen);
@@ -176,6 +190,7 @@ function onDateChange(event) {
   state.dirty = false;
   setSaveStatus("");
   clearAutoSaveTimer();
+  meetingStatusPrompted.clear();
   if (state.firebaseReady) {
     listenAttendance(state.currentDate);
   } else {
@@ -236,8 +251,7 @@ async function addPersonFromInput(event) {
   const cleaned = normalizeName(raw);
   const teamInput = elements.teamInput?.value || "";
   const fallbackTeam =
-    state.selectedTeam !== TEAM_FILTER_ALL &&
-    state.selectedTeam !== TEAM_FILTER_UNASSIGNED
+    !state.teamFilterAll && state.selectedTeam !== TEAM_FILTER_NONE
       ? state.selectedTeam
       : "";
   const cleanedTeam = normalizeTeam(teamInput || fallbackTeam);
@@ -419,19 +433,12 @@ function renderTeamFilter() {
   const teams = getTeamOptions();
   elements.teamFilter.innerHTML = "";
 
-  const allOption = new Option("All teams", TEAM_FILTER_ALL);
-  elements.teamFilter.add(allOption);
+  const noneOption = new Option("Not Selected", TEAM_FILTER_NONE);
+  elements.teamFilter.add(noneOption);
 
   teams.forEach((team) => {
     elements.teamFilter.add(new Option(team, team));
   });
-
-  elements.teamFilter.add(new Option("Unassigned", TEAM_FILTER_UNASSIGNED));
-
-  if (state.selectedTeam === TEAM_FILTER_ALL || state.selectedTeam === TEAM_FILTER_UNASSIGNED) {
-    elements.teamFilter.value = state.selectedTeam;
-    return;
-  }
 
   const match = teams.find(
     (team) => team.toLowerCase() === state.selectedTeam.toLowerCase()
@@ -440,9 +447,11 @@ function renderTeamFilter() {
     state.selectedTeam = match;
     elements.teamFilter.value = match;
   } else {
-    state.selectedTeam = TEAM_FILTER_ALL;
-    elements.teamFilter.value = TEAM_FILTER_ALL;
+    state.selectedTeam = TEAM_FILTER_NONE;
+    elements.teamFilter.value = TEAM_FILTER_NONE;
   }
+
+  updateTeamFilterUI();
 }
 
 function syncTeamInputWithFilter() {
@@ -453,7 +462,8 @@ function syncTeamInputWithFilter() {
     return;
   }
   if (
-    state.selectedTeam !== TEAM_FILTER_ALL &&
+    !state.teamFilterAll &&
+    state.selectedTeam !== TEAM_FILTER_NONE &&
     state.selectedTeam !== TEAM_FILTER_UNASSIGNED
   ) {
     elements.teamInput.value = state.selectedTeam;
@@ -462,23 +472,90 @@ function syncTeamInputWithFilter() {
 
 function onTeamFilterChange(event) {
   state.selectedTeam = event.target.value;
+  state.teamFilterAll = false;
+  updateTeamFilterUI();
   syncTeamInputWithFilter();
   renderAttendanceList();
 }
 
-function filterPeopleByTeam(people) {
-  if (state.selectedTeam === TEAM_FILTER_ALL) {
+function onDirectoryTeamFilterChange(event) {
+  state.directoryTeamFilter = event.target.value;
+  renderDirectoryList();
+}
+
+function toggleTeamFilterAll() {
+  state.teamFilterAll = !state.teamFilterAll;
+  updateTeamFilterUI();
+  renderAttendanceList();
+}
+
+function updateTeamFilterUI() {
+  if (elements.teamFilterAllBtn) {
+    elements.teamFilterAllBtn.classList.toggle("active", state.teamFilterAll);
+    elements.teamFilterAllBtn.setAttribute(
+      "aria-pressed",
+      state.teamFilterAll ? "true" : "false"
+    );
+  }
+}
+
+function filterPeopleByTeam(people, selectedTeam = state.selectedTeam) {
+  if (selectedTeam === TEAM_FILTER_ALL) {
     return people;
   }
 
-  if (state.selectedTeam === TEAM_FILTER_UNASSIGNED) {
+  if (selectedTeam === TEAM_FILTER_NONE) {
+    return [];
+  }
+
+  if (selectedTeam === TEAM_FILTER_UNASSIGNED) {
     return people.filter((person) => !normalizeTeam(person.team));
   }
 
-  const target = state.selectedTeam.toLowerCase();
+  const target = selectedTeam.toLowerCase();
   return people.filter(
     (person) => normalizeTeam(person.team).toLowerCase() === target
   );
+}
+
+function renderDirectoryFilter() {
+  if (!elements.directoryTeamFilter) {
+    return;
+  }
+
+  const teams = getTeamOptions();
+  elements.directoryTeamFilter.innerHTML = "";
+
+  const allOption = new Option("All teams", TEAM_FILTER_ALL);
+  elements.directoryTeamFilter.add(allOption);
+
+  teams.forEach((team) => {
+    elements.directoryTeamFilter.add(new Option(team, team));
+  });
+
+  elements.directoryTeamFilter.add(
+    new Option("Unassigned", TEAM_FILTER_UNASSIGNED)
+  );
+
+  if (
+    state.directoryTeamFilter === TEAM_FILTER_ALL ||
+    state.directoryTeamFilter === TEAM_FILTER_UNASSIGNED
+  ) {
+    elements.directoryTeamFilter.value = state.directoryTeamFilter;
+    return;
+  }
+
+  const match = teams.find(
+    (team) => team.toLowerCase() === state.directoryTeamFilter.toLowerCase()
+  );
+
+  if (match) {
+    state.directoryTeamFilter = match;
+    elements.directoryTeamFilter.value = match;
+  } else {
+    state.directoryTeamFilter = TEAM_FILTER_ALL;
+    elements.directoryTeamFilter.value = TEAM_FILTER_ALL;
+  }
 }
 
 function renderDirectoryList() {
@@ -486,6 +563,7 @@ function renderDirectoryList() {
     return;
   }
 
+  renderDirectoryFilter();
   elements.directoryList.innerHTML = "";
 
   if (!state.people.length) {
@@ -496,7 +574,24 @@ function renderDirectoryList() {
     return;
   }
 
-  state.people.forEach((person) => {
+  const visiblePeople = filterPeopleByTeam(
+    state.people,
+    state.directoryTeamFilter
+  );
+
+  if (!visiblePeople.length) {
+    const empty = document.createElement("div");
+    empty.className = "hint";
+    if (state.directoryTeamFilter === TEAM_FILTER_UNASSIGNED) {
+      empty.textContent = "No unassigned people.";
+    } else {
+      empty.textContent = `No one in ${state.directoryTeamFilter}.`;
+    }
+    elements.directoryList.appendChild(empty);
+    return;
+  }
+
+  visiblePeople.forEach((person) => {
     const row = document.createElement("div");
     row.className = "person-row directory";
     row.dataset.personId = person.id;
@@ -576,6 +671,14 @@ function renderAttendanceList() {
   renderTeamFilter();
   elements.attendanceList.innerHTML = "";
 
+  if (!state.teamFilterAll && state.selectedTeam === TEAM_FILTER_NONE) {
+    const empty = document.createElement("div");
+    empty.className = "hint";
+    empty.textContent = "Select a team to view attendance.";
+    elements.attendanceList.appendChild(empty);
+    return;
+  }
+
   const weekdayKey = getWeekdayKey(state.currentDate);
 
   if (elements.attendanceHint) {
@@ -595,7 +698,11 @@ function renderAttendanceList() {
     return;
   }
 
-  const visiblePeople = filterPeopleByTeam(state.people).filter((person) => {
+  const teamPeople = state.teamFilterAll
+    ? state.people
+    : filterPeopleByTeam(state.people, state.selectedTeam);
+
+  const visiblePeople = teamPeople.filter((person) => {
     if (!weekdayKey) {
       return false;
     }
@@ -608,9 +715,7 @@ function renderAttendanceList() {
     empty.className = "hint";
     if (!weekdayKey) {
       empty.textContent = "No one scheduled for weekends.";
-    } else if (state.selectedTeam === TEAM_FILTER_UNASSIGNED) {
-      empty.textContent = "No unassigned people scheduled today.";
-    } else if (state.selectedTeam === TEAM_FILTER_ALL) {
+    } else if (state.teamFilterAll) {
       empty.textContent = "No one scheduled today.";
     } else {
       empty.textContent = `No one in ${state.selectedTeam} scheduled today.`;
@@ -869,6 +974,13 @@ function clearStatus(personId) {
 
 function cycleMeeting(personId, field) {
   const entry = getEntry(personId);
+  if (!entry.status) {
+    const promptKey = `${state.currentDate}:${personId}`;
+    if (!meetingStatusPrompted.has(promptKey)) {
+      meetingStatusPrompted.add(promptKey);
+      window.alert("Mark general attendance (Here/Tardy/Not) before AM/PM.");
+    }
+  }
   const current = entry[field];
   if (!current) {
     entry[field] = "here";
@@ -1228,22 +1340,61 @@ function createCalendarCell(payload) {
   return cell;
 }
 
+function summarizeEntry(entry) {
+  const summary = { here: 0, not: 0, total: 0, tardy: 0 };
+  if (!entry || !entry.status) {
+    return summary;
+  }
+
+  if (entry.status === "tardy") {
+    summary.tardy = 1;
+  }
+
+  const hasAm = entry.am === "here" || entry.am === "not";
+  const hasPm = entry.pm === "here" || entry.pm === "not";
+
+  if (!hasAm && !hasPm) {
+    summary.total = 1;
+    if (entry.status === "here" || entry.status === "tardy") {
+      summary.here = 1;
+    } else if (entry.status === "not") {
+      summary.not = 1;
+    }
+    return summary;
+  }
+
+  const generalHere = entry.status === "here" || entry.status === "tardy";
+  const generalNot = entry.status === "not";
+  const amValue = hasAm ? entry.am : generalHere ? "here" : generalNot ? "not" : null;
+  const pmValue = hasPm ? entry.pm : generalHere ? "here" : generalNot ? "not" : null;
+
+  [amValue, pmValue].forEach((value) => {
+    if (!value) {
+      return;
+    }
+    summary.total += 1;
+    if (value === "here") {
+      summary.here += 1;
+    } else if (value === "not") {
+      summary.not += 1;
+    }
+  });
+
+  return summary;
+}
+
 function countAttendance(peopleData) {
   const entries = Object.values(peopleData || {});
   let hereCount = 0;
+  let notCount = 0;
   let total = 0;
   entries.forEach((entry) => {
-    if (!entry) {
-      return;
-    }
-    if (entry.status) {
-      total += 1;
-      if (entry.status === "here" || entry.status === "tardy") {
-        hereCount += 1;
-      }
-    }
+    const summary = summarizeEntry(entry);
+    hereCount += summary.here;
+    notCount += summary.not;
+    total += summary.total;
   });
-  return { hereCount, total };
+  return { hereCount, notCount, total };
 }
 
 async function loadTrends() {
@@ -1311,25 +1462,11 @@ function renderTrends() {
         return;
       }
 
-      if (personEntry.status) {
-        record.total += 1;
-        if (personEntry.status === "here" || personEntry.status === "tardy") {
-          record.here += 1;
-        } else if (personEntry.status === "not") {
-          record.not += 1;
-        }
-        if (personEntry.status === "tardy") {
-          record.tardy += 1;
-        }
-      }
-
-      if (
-        personEntry.note &&
-        LATE_REGEX.test(personEntry.note) &&
-        personEntry.status !== "tardy"
-      ) {
-        record.tardy += 1;
-      }
+      const summary = summarizeEntry(personEntry);
+      record.total += summary.total;
+      record.here += summary.here;
+      record.not += summary.not;
+      record.tardy += summary.tardy;
     });
   });
 

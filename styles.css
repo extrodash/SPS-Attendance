@@ -80,6 +80,18 @@ body {
   flex-wrap: wrap;
 }
 
+.team-filter-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ghost.active {
+  background: rgba(15, 23, 42, 0.08);
+  border-color: var(--line);
+}
+
 .field {
   display: grid;
   gap: 6px;
@@ -189,6 +201,13 @@ button:focus-visible {
   display: grid;
   gap: 8px;
   margin-bottom: 16px;
+}
+
+.directory-filter {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .people-input {

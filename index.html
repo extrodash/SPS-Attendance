@@ -18,10 +18,15 @@
         <span>Date</span>
         <input id="date-picker" type="date" />
       </label>
-      <label class="field">
+      <div class="field team-field">
         <span>Team</span>
-        <select id="team-filter" aria-label="Select team"></select>
-      </label>
+        <div class="team-filter-controls">
+          <select id="team-filter" aria-label="Select team"></select>
+          <button id="team-filter-all" class="ghost" type="button">
+            All teams
+          </button>
+        </div>
+      </div>
       <button id="save-btn" class="primary">Save</button>
       <span id="save-status" class="status-text"></span>
     </section>
@@ -51,6 +56,15 @@
               aria-label="Team"
             />
             <button id="add-person-btn" class="primary">Add</button>
+          </div>
+          <div class="directory-filter">
+            <label class="field">
+              <span>Filter</span>
+              <select
+                id="directory-team-filter"
+                aria-label="Filter directory by team"
+              ></select>
+            </label>
           </div>
           <div id="people-message" class="people-message" data-tone="muted"></div>
         </div>
