@@ -15,6 +15,16 @@ import {
   onAuthStateChanged,
   signInAnonymously,
 } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+import {
+  addDays,
+  countAttendance,
+  formatDateKey,
+  getLocalAttendanceForDate,
+  mapAttendanceEntries,
+  parseDateKey,
+  summarizeEntry,
+  todayISO,
+} from "./attendance-core.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyArUCqRKjBkmORPQcAWH1JMaUXj6YPzhK8",
@@ -46,8 +56,7 @@ const elements = {
   monthLabel: document.getElementById("month-label"),
   calendarGrid: document.getElementById("calendar-grid"),
   trendsList: document.getElementById("trends-list"),
-  exportBtn: document.getElementById("export-btn"),
-  importFile: document.getElementById("import-file"),
+  trendsRange: document.getElementById("trends-range"),
   teamFilterAllBtn: document.getElementById("team-filter-all"),
 };
 
@@ -65,6 +74,12 @@ const WEEKDAYS = [
   { key: "fri", label: "F", full: "Friday", index: 5 },
 ];
 const DEFAULT_AVAILABILITY = WEEKDAYS.map((day) => day.key);
+const TREND_RANGES = {
+  week: { days: 7, label: "Past week" },
+  month: { days: 30, label: "Past month" },
+  quarter: { days: 90, label: "Past 3 months" },
+  all: { days: null, label: "All time" },
+};
 
 const state = {
   currentDate: todayISO(),
@@ -79,6 +94,8 @@ const state = {
   teamFilterAll: false,
   directoryTeamFilter: TEAM_FILTER_ALL,
   directoryOpen: false,
+  trendsRange: "quarter",
+  trendsExpandedTeams: new Set(),
 };
 
 let db = null;
@@ -89,6 +106,7 @@ let unsubscribeMonth = null;
 let peopleMessageTimer = null;
 let autoSaveTimer = null;
 let saveInProgress = false;
+let trendsLoadSeq = 0;
 const removeConfirmTimers = new WeakMap();
 const REMOVE_CONFIRM_MS = 3500;
 const meetingStatusPrompted = new Set();
@@ -122,11 +140,9 @@ async function init() {
   });
   elements.prevMonth.addEventListener("click", () => shiftMonth(-1));
   elements.nextMonth.addEventListener("click", () => shiftMonth(1));
-  if (elements.exportBtn) {
-    elements.exportBtn.addEventListener("click", exportBackup);
-  }
-  if (elements.importFile) {
-    elements.importFile.addEventListener("change", importBackup);
+  if (elements.trendsRange) {
+    elements.trendsRange.value = state.trendsRange;
+    elements.trendsRange.addEventListener("change", onTrendsRangeChange);
   }
   setDirectoryOpen(state.directoryOpen);
 
@@ -138,7 +154,6 @@ async function init() {
   if (!hasConfig) {
     elements.configWarning.hidden = false;
     hydrateFromLocal();
-    renderAll();
     return;
   }
 
@@ -180,23 +195,52 @@ function isFirebaseConfigured() {
   });
 }
 
-function todayISO() {
-  const now = new Date();
-  return now.toISOString().slice(0, 10);
+async function onDateChange(event) {
+  const nextDate = event?.target?.value;
+  const switched = await switchDate(nextDate);
+  if (!switched && elements.datePicker) {
+    elements.datePicker.value = state.currentDate;
+  }
 }
 
-function onDateChange(event) {
-  state.currentDate = event.target.value;
+async function switchDate(nextDate) {
+  if (!parseDateKey(nextDate)) {
+    return false;
+  }
+
+  if (nextDate === state.currentDate) {
+    if (elements.datePicker) {
+      elements.datePicker.value = nextDate;
+    }
+    return true;
+  }
+
+  if (state.dirty) {
+    setSaveStatus("Saving...");
+    const saved = await onSave();
+    if (!saved) {
+      setSaveStatus("Could not save current day.");
+      return false;
+    }
+  }
+
+  state.currentDate = nextDate;
   state.dirty = false;
-  setSaveStatus("");
   clearAutoSaveTimer();
   meetingStatusPrompted.clear();
+  setSaveStatus("");
+  if (elements.datePicker) {
+    elements.datePicker.value = nextDate;
+  }
+
   if (state.firebaseReady) {
-    listenAttendance(state.currentDate);
+    listenAttendance(nextDate);
   } else {
     hydrateAttendanceFromLocal();
     renderAttendanceList();
   }
+
+  return true;
 }
 
 function normalizeName(value) {
@@ -277,7 +321,7 @@ async function addPersonFromInput(event) {
   }
   await savePeople();
   renderDirectoryList();
-  renderAttendanceList();
+  renderTeamScopedViews();
   setPeopleMessage(
     cleanedTeam ? `Added ${cleaned} to ${cleanedTeam}.` : `Added ${cleaned}.`,
     "success"
@@ -391,14 +435,20 @@ function createPerson(name, team) {
 }
 
 function getWeekdayKey(dateISO) {
-  const date = new Date(`${dateISO}T00:00:00`);
+  const date = parseDateKey(dateISO);
+  if (!date) {
+    return null;
+  }
   const day = date.getDay();
   const match = WEEKDAYS.find((entry) => entry.index === day);
   return match ? match.key : null;
 }
 
 function getWeekdayLabel(dateISO) {
-  const date = new Date(`${dateISO}T00:00:00`);
+  const date = parseDateKey(dateISO);
+  if (!date) {
+    return "";
+  }
   return date.toLocaleDateString("en-US", { weekday: "long" });
 }
 
@@ -406,6 +456,11 @@ function renderAll() {
   renderDirectoryList();
   renderAttendanceList();
   renderCalendar();
+  renderTrends();
+}
+
+function renderTeamScopedViews() {
+  renderAttendanceList();
   renderTrends();
 }
 
@@ -475,7 +530,7 @@ function onTeamFilterChange(event) {
   state.teamFilterAll = false;
   updateTeamFilterUI();
   syncTeamInputWithFilter();
-  renderAttendanceList();
+  renderTeamScopedViews();
 }
 
 function onDirectoryTeamFilterChange(event) {
@@ -483,10 +538,19 @@ function onDirectoryTeamFilterChange(event) {
   renderDirectoryList();
 }
 
+function onTrendsRangeChange(event) {
+  const nextRange = event?.target?.value;
+  if (!TREND_RANGES[nextRange]) {
+    return;
+  }
+  state.trendsRange = nextRange;
+  loadTrends();
+}
+
 function toggleTeamFilterAll() {
   state.teamFilterAll = !state.teamFilterAll;
   updateTeamFilterUI();
-  renderAttendanceList();
+  renderTeamScopedViews();
 }
 
 function updateTeamFilterUI() {
@@ -831,7 +895,7 @@ async function removePerson(personId) {
   delete state.attendance[personId];
   await savePeople();
   renderDirectoryList();
-  renderAttendanceList();
+  renderTeamScopedViews();
   markDirty();
   setPeopleMessage(`${removed.name} removed.`, "muted");
 }
@@ -850,7 +914,7 @@ async function updatePersonTeam(personId, value) {
   person.team = nextTeam;
   await savePeople();
   renderDirectoryList();
-  renderAttendanceList();
+  renderTeamScopedViews();
   setPeopleMessage(
     nextTeam ? `${person.name} set to ${nextTeam}.` : `${person.name} unassigned.`,
     "muted"
@@ -897,7 +961,7 @@ async function updatePersonName(personId, value, input) {
   person.name = cleaned;
   await savePeople();
   renderDirectoryList();
-  renderAttendanceList();
+  renderTeamScopedViews();
   setPeopleMessage(`Renamed to ${cleaned}.`, "success");
 }
 
@@ -1045,7 +1109,7 @@ function scheduleAutoSave() {
 
 async function onSave() {
   if (saveInProgress) {
-    return;
+    return false;
   }
   saveInProgress = true;
   const payload = buildAttendancePayload();
@@ -1062,6 +1126,11 @@ async function onSave() {
 
     await loadMonth(state.monthCursor);
     await loadTrends();
+    return true;
+  } catch (error) {
+    console.warn("Save error", error);
+    setSaveStatus("Save failed. Please retry.");
+    return false;
   } finally {
     saveInProgress = false;
   }
@@ -1123,13 +1192,13 @@ function listenPeople() {
         state.people = sanitizePeopleList(DEFAULT_PEOPLE);
       }
       renderDirectoryList();
-      renderAttendanceList();
+      renderTeamScopedViews();
       return;
     }
 
     state.people = sanitizePeopleList(data.people);
     renderDirectoryList();
-    renderAttendanceList();
+    renderTeamScopedViews();
   });
 }
 
@@ -1157,33 +1226,27 @@ function listenAttendance(date) {
   });
 }
 
-function mapAttendanceEntries(peopleData) {
-  const mapped = {};
-  Object.entries(peopleData).forEach(([id, entry]) => {
-    mapped[id] = {
-      status: entry.status || null,
-      note: entry.note || "",
-      am: entry.am || null,
-      pm: entry.pm || null,
-    };
-  });
-  return mapped;
-}
-
 function hydrateFromLocal() {
   const local = loadLocalStore();
   const basePeople =
     local.people && local.people.length ? local.people : DEFAULT_PEOPLE;
+  const attendanceStore = local.attendance || {};
   state.people = sanitizePeopleList(basePeople);
-  state.attendance = local.attendance?.[state.currentDate] || {};
-  state.monthAttendance = local.attendance || {};
+  state.attendance = getLocalAttendanceForDate(
+    attendanceStore,
+    state.currentDate
+  );
+  state.monthAttendance = attendanceStore;
   renderAll();
   loadTrends();
 }
 
 function hydrateAttendanceFromLocal() {
   const local = loadLocalStore();
-  state.attendance = local.attendance?.[state.currentDate] || {};
+  state.attendance = getLocalAttendanceForDate(
+    local.attendance || {},
+    state.currentDate
+  );
 }
 
 function loadLocalStore() {
@@ -1232,7 +1295,13 @@ async function loadMonth(date) {
     const filtered = {};
     Object.keys(attendance).forEach((key) => {
       if (key >= start && key <= end) {
-        filtered[key] = attendance[key];
+        const entry = attendance[key];
+        filtered[key] = entry?.people
+          ? entry
+          : {
+              date: key,
+              people: entry && typeof entry === "object" ? entry : {},
+            };
       }
     });
     state.monthAttendance = filtered;
@@ -1266,8 +1335,8 @@ function monthRange(date) {
   const start = new Date(year, month, 1);
   const end = new Date(year, month + 1, 0);
   return {
-    start: start.toISOString().slice(0, 10),
-    end: end.toISOString().slice(0, 10),
+    start: formatDateKey(start),
+    end: formatDateKey(end),
   };
 }
 
@@ -1287,7 +1356,7 @@ function renderCalendar() {
   }
 
   while (cursor.getMonth() === month) {
-    const dateKey = cursor.toISOString().slice(0, 10);
+    const dateKey = formatDateKey(cursor);
     const data = state.monthAttendance[dateKey];
     const cell = createCalendarCell({ date: cursor.getDate(), dateKey, data });
     elements.calendarGrid.appendChild(cell);
@@ -1326,129 +1395,133 @@ function createCalendarCell(payload) {
   }
 
   cell.addEventListener("click", () => {
-    state.currentDate = dateKey;
-    elements.datePicker.value = dateKey;
-    if (state.firebaseReady) {
-      listenAttendance(dateKey);
-    } else {
-      hydrateAttendanceFromLocal();
-      renderAttendanceList();
-    }
+    switchDate(dateKey);
   });
 
   cell.append(day, meta);
   return cell;
 }
 
-function summarizeEntry(entry) {
-  const summary = { here: 0, not: 0, total: 0, tardy: 0 };
-  if (!entry || !entry.status) {
-    return summary;
-  }
-
-  if (entry.status === "tardy") {
-    summary.tardy = 1;
-  }
-
-  const hasAm = entry.am === "here" || entry.am === "not";
-  const hasPm = entry.pm === "here" || entry.pm === "not";
-
-  if (!hasAm && !hasPm) {
-    summary.total = 1;
-    if (entry.status === "here" || entry.status === "tardy") {
-      summary.here = 1;
-    } else if (entry.status === "not") {
-      summary.not = 1;
-    }
-    return summary;
-  }
-
-  const generalHere = entry.status === "here" || entry.status === "tardy";
-  const generalNot = entry.status === "not";
-  const amValue = hasAm ? entry.am : generalHere ? "here" : generalNot ? "not" : null;
-  const pmValue = hasPm ? entry.pm : generalHere ? "here" : generalNot ? "not" : null;
-
-  [amValue, pmValue].forEach((value) => {
-    if (!value) {
-      return;
-    }
-    summary.total += 1;
-    if (value === "here") {
-      summary.here += 1;
-    } else if (value === "not") {
-      summary.not += 1;
-    }
-  });
-
-  return summary;
-}
-
-function countAttendance(peopleData) {
-  const entries = Object.values(peopleData || {});
-  let hereCount = 0;
-  let notCount = 0;
-  let total = 0;
-  entries.forEach((entry) => {
-    const summary = summarizeEntry(entry);
-    hereCount += summary.here;
-    notCount += summary.not;
-    total += summary.total;
-  });
-  return { hereCount, notCount, total };
-}
-
 async function loadTrends() {
-  const end = todayISO();
-  const start = addDays(end, -90);
+  const loadSeq = ++trendsLoadSeq;
+  const { start, end } = resolveTrendsRange();
 
   if (!state.firebaseReady) {
     const local = loadLocalStore();
     const attendance = local.attendance || {};
-    state.trendsAttendance = Object.values(attendance).filter(
-      (entry) => entry?.date >= start && entry?.date <= end
-    );
+    const records = Object.entries(attendance)
+      .filter(([dateKey]) => !start || (dateKey >= start && dateKey <= end))
+      .map(([dateKey, entry]) => normalizeTrendEntry(dateKey, entry));
+    if (loadSeq !== trendsLoadSeq) {
+      return;
+    }
+    state.trendsAttendance = records;
     renderTrends();
     return;
   }
 
-  const q = query(
-    collection(db, "attendance"),
-    where("date", ">=", start),
-    where("date", "<=", end)
-  );
+  try {
+    let snapshot;
+    if (!start) {
+      snapshot = await getDocs(collection(db, "attendance"));
+    } else {
+      const q = query(
+        collection(db, "attendance"),
+        where("date", ">=", start),
+        where("date", "<=", end)
+      );
+      snapshot = await getDocs(q);
+    }
 
-  const snapshot = await getDocs(q);
-  state.trendsAttendance = snapshot.docs.map((docSnap) => docSnap.data());
-  renderTrends();
+    if (loadSeq !== trendsLoadSeq) {
+      return;
+    }
+
+    state.trendsAttendance = snapshot.docs
+      .map((docSnap) => normalizeTrendEntry(docSnap.id, docSnap.data()))
+      .filter((entry) => !start || (entry.date >= start && entry.date <= end));
+    renderTrends();
+  } catch (error) {
+    if (loadSeq !== trendsLoadSeq) {
+      return;
+    }
+    console.warn("Trend load error", error);
+    state.trendsAttendance = [];
+    renderTrends();
+  }
 }
 
-function addDays(dateString, delta) {
-  const date = new Date(dateString);
-  date.setDate(date.getDate() + delta);
-  return date.toISOString().slice(0, 10);
-}
-
-function renderTrends() {
-  elements.trendsList.innerHTML = "";
-
-  if (!state.people.length) {
-    const empty = document.createElement("div");
-    empty.className = "hint";
-    empty.textContent = "No profiles in the directory yet.";
-    elements.trendsList.appendChild(empty);
-    return;
+function resolveTrendsRange() {
+  const rangeKey = TREND_RANGES[state.trendsRange] ? state.trendsRange : "quarter";
+  if (rangeKey !== state.trendsRange) {
+    state.trendsRange = rangeKey;
+    if (elements.trendsRange) {
+      elements.trendsRange.value = rangeKey;
+    }
   }
 
-  const stats = new Map();
+  const end = todayISO();
+  const config = TREND_RANGES[rangeKey];
+  if (config.days === null) {
+    return { start: null, end };
+  }
 
+  return {
+    start: addDays(end, -(config.days - 1)),
+    end,
+  };
+}
+
+function normalizeTrendEntry(dateKey, entry) {
+  const source = entry && typeof entry === "object" ? entry : {};
+  if (source.people && typeof source.people === "object") {
+    return {
+      date: source.date || dateKey,
+      people: source.people,
+    };
+  }
+
+  return {
+    date: dateKey,
+    people: source,
+  };
+}
+
+function buildTrendTeams() {
+  const map = new Map();
   state.people.forEach((person) => {
-    stats.set(person.id, {
-      id: person.id,
-      name: person.name,
-      here: 0,
-      not: 0,
-      total: 0,
-      tardy: 0,
+    const teamName = normalizeTeam(person.team);
+    if (!teamName) {
+      return;
+    }
+    const teamKey = teamName.toLowerCase();
+    if (!map.has(teamKey)) {
+      map.set(teamKey, { key: teamKey, name: teamName, members: [] });
+    }
+    map.get(teamKey).members.push(person);
+  });
+
+  const teams = Array.from(map.values()).sort((a, b) =>
+    a.name.localeCompare(b.name)
+  );
+  teams.forEach((team) => {
+    team.members.sort((a, b) => a.name.localeCompare(b.name));
+  });
+  return teams;
+}
+
+function buildTrendPersonStats(teams) {
+  const stats = new Map();
+  teams.forEach((team) => {
+    team.members.forEach((person) => {
+      stats.set(person.id, {
+        id: person.id,
+        name: person.name,
+        here: 0,
+        not: 0,
+        total: 0,
+        tardy: 0,
+      });
     });
   });
 
@@ -1461,7 +1534,6 @@ function renderTrends() {
       if (!record) {
         return;
       }
-
       const summary = summarizeEntry(personEntry);
       record.total += summary.total;
       record.here += summary.here;
@@ -1470,117 +1542,223 @@ function renderTrends() {
     });
   });
 
-  const sorted = Array.from(stats.values()).sort((a, b) =>
-    a.name.localeCompare(b.name)
-  );
+  return stats;
+}
 
-  const hasAnyData = sorted.some(
-    (record) => record.total > 0 || record.tardy > 0
+function teamTotals(team, stats) {
+  return team.members.reduce(
+    (totals, person) => {
+      const record = stats.get(person.id);
+      if (!record) {
+        return totals;
+      }
+      totals.here += record.here;
+      totals.not += record.not;
+      totals.total += record.total;
+      totals.tardy += record.tardy;
+      return totals;
+    },
+    { here: 0, not: 0, total: 0, tardy: 0 }
   );
+}
 
-  if (!hasAnyData) {
+function formatTrendPercent(here, total) {
+  if (!total) {
+    return "--";
+  }
+  return `${Math.round((here / total) * 100)}%`;
+}
+
+function createTrendDetailTable(team, stats) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "trend-table-wrap";
+
+  const table = document.createElement("table");
+  table.className = "trend-table";
+  table.innerHTML = `
+    <colgroup>
+      <col />
+      <col />
+      <col />
+      <col />
+      <col />
+    </colgroup>
+  `;
+
+  const thead = document.createElement("thead");
+  thead.innerHTML = `
+    <tr>
+      <th scope="col">Person</th>
+      <th scope="col">Here %</th>
+      <th scope="col">Tardy</th>
+      <th scope="col">Not</th>
+      <th scope="col">Total</th>
+    </tr>
+  `;
+
+  const tbody = document.createElement("tbody");
+  team.members.forEach((person) => {
+    const record = stats.get(person.id) || {
+      name: person.name,
+      here: 0,
+      not: 0,
+      total: 0,
+      tardy: 0,
+    };
+
+    const row = document.createElement("tr");
+    if (!record.total && !record.tardy) {
+      row.className = "trend-row-empty";
+    }
+
+    const name = document.createElement("th");
+    name.scope = "row";
+    name.textContent = record.name;
+
+    const herePercent = document.createElement("td");
+    herePercent.className = "num";
+    herePercent.textContent = formatTrendPercent(record.here, record.total);
+
+    const tardy = document.createElement("td");
+    tardy.className = "num";
+    tardy.textContent = `${record.tardy}`;
+
+    const not = document.createElement("td");
+    not.className = "num";
+    not.textContent = `${record.not}`;
+
+    const total = document.createElement("td");
+    total.className = "num";
+    total.textContent = `${record.total}`;
+
+    row.append(name, herePercent, tardy, not, total);
+    tbody.appendChild(row);
+  });
+
+  table.append(thead, tbody);
+  wrapper.appendChild(table);
+  return wrapper;
+}
+
+function createTrendTeamCard(team, stats) {
+  const totals = teamTotals(team, stats);
+  const percent = formatTrendPercent(totals.here, totals.total);
+  const isOpen = state.trendsExpandedTeams.has(team.key);
+  const detailId = `trend-team-${team.key.replace(/[^a-z0-9_-]/g, "-")}`;
+  const rangeLabel = TREND_RANGES[state.trendsRange]?.label || "Past 3 months";
+
+  const card = document.createElement("div");
+  card.className = "trend-team-card";
+  card.dataset.open = isOpen ? "true" : "false";
+
+  const header = document.createElement("div");
+  header.className = "trend-team-header";
+
+  const identity = document.createElement("div");
+  identity.className = "trend-team-identity";
+
+  const name = document.createElement("div");
+  name.className = "trend-team-name";
+  name.textContent = team.name;
+
+  const memberCount = document.createElement("div");
+  memberCount.className = "trend-team-meta";
+  memberCount.textContent = `${team.members.length} member${team.members.length === 1 ? "" : "s"}`;
+
+  identity.append(name, memberCount);
+
+  const actions = document.createElement("div");
+  actions.className = "trend-team-actions";
+
+  const kpi = document.createElement("div");
+  kpi.className = "trend-team-kpi";
+
+  const percentText = document.createElement("div");
+  percentText.className = "trend-team-percent";
+  percentText.textContent = percent;
+
+  const countText = document.createElement("div");
+  countText.className = "trend-team-count";
+  countText.textContent = totals.total
+    ? `${totals.here}/${totals.total} here`
+    : "No check-ins";
+
+  const periodText = document.createElement("div");
+  periodText.className = "trend-team-period";
+  periodText.textContent = rangeLabel;
+
+  kpi.append(percentText, countText, periodText);
+
+  const toggle = document.createElement("button");
+  toggle.className = "trend-team-toggle";
+  toggle.type = "button";
+  toggle.setAttribute("aria-expanded", isOpen ? "true" : "false");
+  toggle.setAttribute("aria-controls", detailId);
+  toggle.setAttribute("aria-label", `Toggle ${team.name} details`);
+
+  const caret = document.createElement("span");
+  caret.className = "trend-caret";
+  caret.textContent = ">";
+
+  const label = document.createElement("span");
+  label.className = "trend-toggle-label";
+  label.textContent = isOpen ? "Hide details" : "Show details";
+
+  toggle.append(caret, label);
+  toggle.addEventListener("click", () => {
+    if (state.trendsExpandedTeams.has(team.key)) {
+      state.trendsExpandedTeams.delete(team.key);
+    } else {
+      state.trendsExpandedTeams.add(team.key);
+    }
+    renderTrends();
+  });
+
+  actions.append(kpi, toggle);
+  header.append(identity, actions);
+  card.appendChild(header);
+
+  const bar = document.createElement("div");
+  bar.className = "trend-team-bar";
+  const fill = document.createElement("div");
+  fill.className = "trend-team-fill";
+  fill.style.width = totals.total ? `${Math.max(4, (totals.here / totals.total) * 100)}%` : "0%";
+  bar.appendChild(fill);
+  card.appendChild(bar);
+
+  const detail = document.createElement("div");
+  detail.id = detailId;
+  detail.className = "trend-team-detail";
+  detail.hidden = !isOpen;
+
+  if (isOpen) {
+    detail.appendChild(createTrendDetailTable(team, stats));
+  }
+
+  card.appendChild(detail);
+  return card;
+}
+
+function renderTrends() {
+  elements.trendsList.innerHTML = "";
+
+  const teams = buildTrendTeams();
+
+  if (!teams.length) {
     const empty = document.createElement("div");
-    empty.className = "hint";
-    empty.textContent = "No attendance data yet for current profiles.";
+    empty.className = "trend-team-placeholder";
+    empty.textContent = "No teams in the directory yet.";
     elements.trendsList.appendChild(empty);
     return;
   }
 
-  const header = document.createElement("div");
-  header.className = "trend-row trend-header";
-  header.innerHTML = `
-    <div>Person</div>
-    <div class="metric">Here %</div>
-    <div class="metric">Tardy</div>
-    <div class="metric">Not</div>
-    <div class="metric">Total</div>
-  `;
-  elements.trendsList.appendChild(header);
+  const validKeys = new Set(teams.map((team) => team.key));
+  state.trendsExpandedTeams = new Set(
+    [...state.trendsExpandedTeams].filter((key) => validKeys.has(key))
+  );
 
-  sorted.forEach((record) => {
-    if (record.total === 0 && record.tardy === 0) {
-      return;
-    }
-    const row = document.createElement("div");
-    row.className = "trend-row";
-
-    const name = document.createElement("div");
-    name.className = "name";
-    name.textContent = record.name;
-
-    const percent = record.total
-      ? Math.round((record.here / record.total) * 100)
-      : 0;
-    const here = document.createElement("div");
-    here.className = "metric";
-    here.textContent = `${percent}%`;
-
-    const tardy = document.createElement("div");
-    tardy.className = "metric";
-    tardy.textContent = `${record.tardy}`;
-
-    const not = document.createElement("div");
-    not.className = "metric";
-    not.textContent = `${record.not}`;
-
-    const total = document.createElement("div");
-    total.className = "metric";
-    total.textContent = `${record.total}`;
-
-    row.append(name, here, tardy, not, total);
-    elements.trendsList.appendChild(row);
+  const stats = buildTrendPersonStats(teams);
+  teams.forEach((team) => {
+    elements.trendsList.appendChild(createTrendTeamCard(team, stats));
   });
-}
-
-function exportBackup() {
-  const local = loadLocalStore();
-  const data = {
-    exportedAt: new Date().toISOString(),
-    people: local.people || state.people,
-    attendance: local.attendance || {},
-  };
-
-  const blob = new Blob([JSON.stringify(data, null, 2)], {
-    type: "application/json",
-  });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = `attendance-backup-${todayISO()}.json`;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
-}
-
-async function importBackup(event) {
-  const file = event.target.files?.[0];
-  if (!file) {
-    return;
-  }
-
-  try {
-    const text = await file.text();
-    const data = JSON.parse(text);
-    if (!data || !data.people || !data.attendance) {
-      throw new Error("Invalid backup format");
-    }
-
-    const people = sanitizePeopleList(data.people);
-
-    saveLocalStore({
-      people,
-      attendance: data.attendance,
-    });
-
-    state.people = people;
-    state.attendance = data.attendance[state.currentDate] || {};
-    state.monthAttendance = data.attendance || {};
-    renderAll();
-  } catch (error) {
-    alert("Could not import that file.");
-    console.warn(error);
-  } finally {
-    event.target.value = "";
-  }
 }

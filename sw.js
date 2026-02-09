@@ -4,6 +4,7 @@ const ASSETS = [
   "/index.html",
   "/styles.css",
   "/app.js",
+  "/attendance-core.js",
   "/manifest.webmanifest",
 ];
 

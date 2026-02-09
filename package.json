@@ -1,4 +1,9 @@
 {
+  "type": "module",
+  "scripts": {
+    "test": "npm run test:smoke",
+    "test:smoke": "node --test tests/reliability-smoke.test.mjs"
+  },
   "dependencies": {
     "firebase": "^12.8.0"
   }

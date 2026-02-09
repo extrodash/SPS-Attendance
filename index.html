@@ -95,7 +95,15 @@
     <section class="card">
       <div class="section-title">
         <span>Trends</span>
-        <span class="hint">Last 90 days</span>
+        <div class="trends-controls">
+          <label class="sr-only" for="trends-range">Trend Range</label>
+          <select id="trends-range" aria-label="Trend range">
+            <option value="week">Past week</option>
+            <option value="month">Past month</option>
+            <option value="quarter" selected>Past 3 months</option>
+            <option value="all">All time</option>
+          </select>
+        </div>
       </div>
       <div id="trends-list" class="trends-list"></div>
     </section>
